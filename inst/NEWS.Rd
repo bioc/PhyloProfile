@@ -2,6 +2,14 @@
 \title{PhyloProfile news}
 \encoding{UTF-8}
 
+\section{Version 1.20.2}{
+  \itemize{
+    \item hover option for UMAP
+    \item UMAP 3D using plotly
+    \item fixed bug with Point's info
+  }
+}
+
 \section{Version 1.20.1}{
   \itemize{
     \item auto identify refspec
