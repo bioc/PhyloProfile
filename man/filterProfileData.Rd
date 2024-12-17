@@ -84,7 +84,8 @@ taxonIDs <- levels(as.factor(fullProcessedProfile$ncbiID))
 sortedInputTaxa <- sortInputTaxa(
     taxonIDs, rankName, refTaxon, NULL, NULL
 )
-taxaCount <- sortedInputTaxa \%>\% dplyr::count(supertaxon)
+taxaCount <- sortedInputTaxa \%>\% dplyr::group_by(supertaxon) \%>\%
+    summarise(n = n(), .groups = "drop")
 filterProfileData(
     fullProcessedProfile,
     taxaCount,

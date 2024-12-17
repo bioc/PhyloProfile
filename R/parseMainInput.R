@@ -144,6 +144,15 @@ xmlParser <- function(inputFile = NULL){
     finalDf <- finalDf[, c(refcols, setdiff(names(finalDf), refcols))]
     # remove columns that contains only NA
     finalDf <- finalDf[, colSums(is.na(finalDf)) < nrow(finalDf)]
+    # convert geneID, ncbiID and orthoID to factors
+    finalDf[seq_len(3)] <- lapply(finalDf[seq_len(3)], as.factor)
+    # convert var1, var2 to numeric, suppressing warnings
+    if (ncol(finalDf) > 3) {
+        finalDf[4:min(5, ncol(finalDf))] <- lapply(
+            finalDf[4:min(5, ncol(finalDf))],
+            function(col) suppressWarnings(as.numeric(as.character(col)))
+        )
+    }
     return(finalDf)
 }
 
@@ -224,6 +233,7 @@ wideToLong <- function(inputFile = NULL){
         var2 = suppressWarnings(as.numeric(orthoInfo$X3)),
         stringsAsFactors = FALSE
     )
+    longDataframe[seq_len(3)] <- lapply(longDataframe[seq_len(3)], as.factor)
     return(longDataframe)
 }
 
@@ -256,25 +266,12 @@ createLongMatrix <- function(inputFile = NULL){
     else if (inputType == "long") {
         longDataframe <- data.frame(fread(
             file = inputFile, sep = "\t", header = TRUE, check.names = FALSE, 
-            stringsAsFactors = FALSE
+            stringsAsFactors = TRUE
         ))
     }
     # WIDE
     else if (inputType == "wide") longDataframe <- wideToLong(inputFile)
     else return(NULL)
-    # Convert geneID, ncbiID and orthoID to factors
-    longDataframe[seq_len(3)] <- lapply(longDataframe[seq_len(3)], as.factor)
-    # Convert var1, var2 to numeric, suppressing warnings
-    if (ncol(longDataframe) > 3) {
-        longDataframe[4:min(5, ncol(longDataframe))] <- lapply(
-            longDataframe[4:min(5, ncol(longDataframe))],
-            function(col) suppressWarnings(as.numeric(as.character(col)))
-        )
-    }
-    # Convert the 6th column to a factor (if applicable)
-    if (ncol(longDataframe) == 6) {
-        longDataframe[[6]] <- as.factor(longDataframe[[6]])
-    }
     # Remove duplicated rows
     longDataframe <- dplyr::distinct(longDataframe)
     return(longDataframe)

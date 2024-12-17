@@ -33,13 +33,13 @@ getDataClustering <- function(
     presSpec <- geneID <- supertaxon <- orthoID <- NULL
     # Filter out rows where presSpec is 0
     subDataHeat <- data %>% dplyr::filter(presSpec > 0)
-    
+
     # Predict orthoID format (default is "other")
     subDataHeat$orthoID <- as.character(subDataHeat$orthoID)
     idFormat <- ifelse(
         length(subDataHeat$orthoID) > 0 &&
             grepl(
-                subDataHeat$supertaxonID[1], 
+                subDataHeat$supertaxonID[1],
                 strsplit(subDataHeat$orthoID[1], '\\|', fixed = TRUE)[[1]][2]
             ), "bionf", "other"
     )
@@ -54,17 +54,17 @@ getDataClustering <- function(
             geneID ~ supertaxon, value.var = "presSpec"
         )
     } else if (profileType == "orthoID") {
-        subDataHeat <- subDataHeat %>% 
+        subDataHeat <- subDataHeat %>%
             dplyr::select(geneID, supertaxon, orthoID) %>%
             dplyr::mutate(
                 orthoID = if (idFormat == "bionf") {
                     paste(
                         vapply(
-                            strsplit(as.character(orthoID), "\\|"), 
+                            strsplit(as.character(orthoID), "\\|"),
                             `[`, character(1), 2
                         ),
                         vapply(
-                            strsplit(as.character(orthoID), "\\|"), 
+                            strsplit(as.character(orthoID), "\\|"),
                             `[`, character(1), 3
                         ),
                         sep = "#"
@@ -120,6 +120,7 @@ getDataClustering <- function(
 #' @importFrom bioDist cor.dist
 #' @importFrom stats dist as.dist
 #' @importFrom energy dcor
+#' @importFrom Rfast Dist
 #' @author Carla Mölbert (carla.moelbert@gmx.de), Vinh Tran
 #' (tran@bio.uni-frankfurt.de)
 #' @seealso \code{\link{getDataClustering}}
@@ -138,7 +139,8 @@ getDistanceMatrix <- function(profiles = NULL, method = "mutualInformation") {
     profiles <-  profiles[rowSums(profiles != 0) > 0, ]
     distMethods <- c("euclidean", "maximum", "manhattan", "canberra", "binary")
     if (method %in% distMethods) {
-        distanceMatrix <- stats::dist(profiles, method = method)
+        distanceMatrix <- Rfast::Dist(profiles, method = method)
+        colnames(distanceMatrix)<-rownames(distanceMatrix)<-rownames(profiles)
     } else if (method == "distanceCorrelation") {
         n <- seq_len(nrow(profiles))
         matrix <- matrix(0L, nrow = nrow(profiles), ncol = nrow(profiles))
@@ -163,12 +165,12 @@ getDistanceMatrix <- function(profiles = NULL, method = "mutualInformation") {
     } else if (method == "pearson") {
         distanceMatrix <-  bioDist::cor.dist(as.matrix(profiles))
     }
-    return(distanceMatrix)
+    return(as.matrix(distanceMatrix))
 }
 
 #' Create a hclust object from the distance matrix
 #' @export
-#' @param distanceMatrix calculated distance matrix (see ?getDistanceMatrix)
+#' @param distanceMatrix calculated distance matrix as dist object
 #' @param clusterMethod clustering method ("single", "complete",
 #' "average" for UPGMA, "mcquitty" for WPGMA, "median" for WPGMC,
 #' or "centroid" for UPGMC). Default = "complete".
@@ -187,20 +189,20 @@ getDistanceMatrix <- function(profiles = NULL, method = "mutualInformation") {
 #' distMethod <- "mutualInformation"
 #' distanceMatrix <- getDistanceMatrix(profiles, distMethod)
 #' clusterMethod <- "complete"
-#' clusterDataDend(distanceMatrix, clusterMethod)
+#' clusterDataDend(as.dist(distanceMatrix), clusterMethod)
 
 clusterDataDend <- function(distanceMatrix = NULL, clusterMethod = "complete") {
     if (is.null(distanceMatrix)) stop("Distance matrix cannot be NULL!")
     if (!inherits(distanceMatrix,"dist")) stop("Input must be a 'dist' object!")
     # Validate clustering method
     validMethods <- c(
-        "complete", "ward.D", "ward.D2", "single", "average", "mcquitty", 
+        "complete", "ward.D", "ward.D2", "single", "average", "mcquitty",
         "median", "centroid"
     )
     if (!clusterMethod %in% validMethods) {
         stop(
             paste(
-                "Invalid clustering method. Choose one of:", 
+                "Invalid clustering method. Choose one of:",
                 paste(validMethods, collapse = ", ")
             )
         )
@@ -226,7 +228,7 @@ clusterDataDend <- function(distanceMatrix = NULL, clusterMethod = "complete") {
 #' distMethod <- "mutualInformation"
 #' distanceMatrix <- getDistanceMatrix(profiles, distMethod)
 #' clusterMethod <- "complete"
-#' dd <- clusterDataDend(distanceMatrix, clusterMethod)
+#' dd <- clusterDataDend(as.dist(distanceMatrix), clusterMethod)
 #' getDendrogram(dd)
 
 getDendrogram <- function(dd = NULL) {

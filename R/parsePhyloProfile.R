@@ -50,7 +50,7 @@ getNameList <- function(taxDB = NULL) {
             showProgress = FALSE
         )
     }
-    
+
     taxonNamesReduced$fullName <- as.character(taxonNamesReduced$fullName)
     taxonNamesReduced$rank <- as.character(taxonNamesReduced$rank)
     taxonNamesReduced <- unique(taxonNamesReduced)
@@ -81,22 +81,20 @@ getTaxonomyMatrix <- function(
 ){
     taxonomyMatrixFile <- if (is.null(taxDB)) {
         file.path(
-            system.file(package = "PhyloProfile"), 
+            system.file(package = "PhyloProfile"),
             "PhyloProfile/data/taxonomyMatrix.txt"
         )
     } else {
         file.path(taxDB, "taxonomyMatrix.txt")
     }
-
     if (!file.exists(taxonomyMatrixFile)) {
         utils::data(taxonomyMatrix)
     } else {
         taxonomyMatrix <- data.table::fread(
-            taxonomyMatrixFile, sep = "\t", header = TRUE, 
+            taxonomyMatrixFile, sep = "\t", header = TRUE,
             stringsAsFactors = TRUE, showProgress = FALSE
         )
     }
-
     if (subsetTaxaCheck) {
         if (!missing(taxonIDs)) {
             taxonomyMatrix <- taxonomyMatrix[
@@ -371,14 +369,22 @@ sortInputTaxa <- function(
 #' taxaCount <- profileWithTaxonomy %>% dplyr::count(supertaxon)
 #' taxaCount$n <- 1
 #' calcPresSpec(profileWithTaxonomy, taxaCount)
+
 calcPresSpec <- function(profileWithTax, taxaCount) {
     if (missing(profileWithTax)) stop("No input data given")
     if (missing(taxaCount)) stop("No supertaxon count given")
     geneID <- supertaxon <- paralog <- abbrName <- NULL
     presSpec <- presentTaxa <- totalTaxa <- NULL
+    # Check if  working with the lowest taxonomy rank
+    if (all(profileWithTax$numberSpec == 1)) {
+        profileWithTax <- profileWithTax %>% select(geneID, supertaxon) %>%
+            mutate(presentTaxa = 1, presSpec = as.double(1), totalTaxa = 1) %>%
+            arrange(geneID, supertaxon) %>% distinct()
+        return(profileWithTax)
+    }
     # Filter out rows with missing orthoID to reduce subsequent data size
     profileWithTax <- profileWithTax[
-        !is.na(profileWithTax$orthoID) & profileWithTax$orthoID != "NA", 
+        !is.na(profileWithTax$orthoID) & profileWithTax$orthoID != "NA",
     ]
     # Pre-calculate geneID and supertaxon combinations for merging later
     geneIDSupertaxon <- profileWithTax %>%
@@ -387,12 +393,10 @@ calcPresSpec <- function(profileWithTax, taxaCount) {
     geneSupertaxonCount <- geneIDSupertaxon %>% group_by(geneID, supertaxon) %>%
         summarise(presentTaxa = n(), .groups = "drop")
     # Perform the join with taxaCount and calculate presSpec efficiently
-    presSpecDt <- geneSupertaxonCount %>% 
+    presSpecDt <- geneSupertaxonCount %>%
         inner_join(taxaCount, by = "supertaxon") %>%
-        mutate(
-            presSpec = presentTaxa / n,
-            totalTaxa = n
-        ) %>% select(-n) %>% filter(presSpec <= 1)
+        mutate(presSpec = presentTaxa / n, totalTaxa = n) %>%
+        select(-n) %>% filter(presSpec <= 1)
     # Merge with geneIDSupertaxon for missing combinations and fill defaults
     finalPresSpecDt <- geneIDSupertaxon %>%
         left_join(presSpecDt, by = c("geneID", "supertaxon")) %>%
@@ -434,19 +438,19 @@ calcPresSpec <- function(profileWithTax, taxaCount) {
 #' sortedInputTaxa <- sortInputTaxa(
 #'     taxonIDs, "class", "Mammalia", NULL, NULL
 #' )
-#' taxaCount <- sortedInputTaxa %>% dplyr::group_by(supertaxon) %>% 
-#'     summarise(.groups = "drop")
+#' taxaCount <- sortedInputTaxa %>% dplyr::group_by(supertaxon) %>%
+#'     summarise(n = n(), .groups = "drop")
 #' coorthoCOMax <- 999
 #' parseInfoProfile(
 #'     mainLongRaw, sortedInputTaxa, taxaCount, coorthoCOMax
 #' )
 
 parseInfoProfile <- function(
-    inputDf, sortedInputTaxa, taxaCount, coorthoCOMax = 9999
+        inputDf, sortedInputTaxa, taxaCount, coorthoCOMax = 9999
 ) {
     if (is.null(inputDf) | is.null(sortedInputTaxa))
         stop("Input profiles and sorted taxonomy data cannot be NULL!")
-    geneID <- ncbiID <- NULL
+    geneID <- ncbiID <- paralog <- geneName <- NULL
     if (ncol(inputDf) > 3) {
         if (ncol(inputDf) < 5) {colnames(inputDf)[4] <- "var1"}
         else if (ncol(inputDf) < 6) {
@@ -455,39 +459,34 @@ parseInfoProfile <- function(
     }
     if (coorthoCOMax < 1) coorthoCOMax <- 1
     # count number of inparalogs & calculate frequency of all supertaxa
-    paralogCount <- inputDf %>%
+    inputDf <- inputDf %>%
         dplyr::group_by(geneID, ncbiID) %>%
-        dplyr::summarise(paralog = dplyr::n(), .groups = "drop")
-    inputDf <- merge(inputDf, paralogCount, by = c("geneID", "ncbiID"))
+        dplyr::mutate(paralog = dplyr::n()) %>%
+        dplyr::ungroup()
     # filter by number of coorthologs
-    inputDf <- inputDf[!(inputDf$paralog > coorthoCOMax),]
-    # merge inputDf and sortedInputTaxa to get taxonomy info
-    taxaMdData <- merge(inputDf, sortedInputTaxa, by = "ncbiID")
-    # merge with taxaCount to get number of species
-    fullMdData <- merge(taxaMdData, taxaCount, by = ("supertaxon"), all.x=TRUE)
-    names(fullMdData)[names(fullMdData) == "n"] <- "numberSpec"
-    fullMdData$fullName <- as.vector(fullMdData$fullName)
-    names(fullMdData)[names(fullMdData) == "orthoID.x"] <- "orthoID"
-    fullMdData <- fullMdData[!duplicated(fullMdData), ]
+    inputDf <- inputDf %>% filter(!(paralog > coorthoCOMax))
+    # add tax info from sortedInputTaxa and number of species from taxaCount
+    fullMdData <- inputDf %>%
+        left_join(sortedInputTaxa, by = "ncbiID") %>%
+        left_join(taxaCount, by = "supertaxon") %>%
+        distinct()
+    fullMdData$fullName <- as.character(fullMdData$fullName)
     # add geneName column if not yet exist
     if (!("geneName" %in% colnames(fullMdData)))
         fullMdData$geneName <- fullMdData$geneID
-    # sort geneName based on the order of geneID
-    orderedName <- unlist(
-        vapply(
-            levels(fullMdData$geneID), 
-            function(x)
-                as.character(
-                    unique(fullMdData$geneName[fullMdData$geneID == x])
-                ), 
-            character(1)
-        )
-    )
-    fullMdData$geneName <- factor(
-        fullMdData$geneName, levels = orderedName
-    )
+    # Sort `geneName` based on the order of `geneID`
+    # Extract unique gene names for each geneID
+    orderedName <- fullMdData %>%
+        dplyr::group_by(geneID) %>%
+        dplyr::reframe(geneName = unique(as.character(geneName))) %>%
+        dplyr::pull(geneName)
+    # Update `geneName` as a factor with the ordered levels
+    fullMdData$geneName <- factor(fullMdData$geneName, levels = orderedName)
+    # Rename column "n" to "numberSpec"
+    fullMdData <- fullMdData %>% dplyr::rename(numberSpec = n)
     return(fullMdData)
 }
+
 
 #' Filter phylogentic profiles
 #' @description Create a filtered data needed for plotting or clustering
@@ -558,7 +557,8 @@ parseInfoProfile <- function(
 #' sortedInputTaxa <- sortInputTaxa(
 #'     taxonIDs, rankName, refTaxon, NULL, NULL
 #' )
-#' taxaCount <- sortedInputTaxa %>% dplyr::count(supertaxon)
+#' taxaCount <- sortedInputTaxa %>% dplyr::group_by(supertaxon) %>%
+#'     summarise(n = n(), .groups = "drop")
 #' filterProfileData(
 #'     fullProcessedProfile,
 #'     taxaCount,
@@ -574,6 +574,7 @@ parseInfoProfile <- function(
 #'     var1AggregateBy,
 #'     var2AggregateBy
 #' )
+
 filterProfileData <- function(
     DF, taxaCount, refTaxon = NULL, percentCO = c(0, 1), coorthoCOMax = 9999,
     var1CO = c(0, 1), var2CO = c(0, 1), var1Rel = "protein",
@@ -582,11 +583,10 @@ filterProfileData <- function(
 ) {
     if (is.null(DF)) stop("Profile data cannot be NULL!")
     if (is.null(refTaxon)) refTaxon <- "NA"
-
+    geneID <- supertaxon <- value <- NULL
     flag <- ifelse(all(DF$numberSpec == 1), 0, 1)
 
     DF$taxonMod <- sub("^[[:digit:]]*_", "", DF$supertaxon)
-
     filter_var <- function(var, varCO, rel, refTaxon, taxonMod) {
         if (rel == "protein") {
             var[taxonMod != refTaxon & (var < varCO[1] | var > varCO[2])] <- NA
@@ -606,54 +606,53 @@ filterProfileData <- function(
 
     DFtmp <- DF[stats::complete.cases(DF), ]
     finalPresSpecDt <- calcPresSpec(DFtmp, taxaCount)
-
-    DF <- merge(
-        DF, finalPresSpecDt, by = c("geneID", "supertaxon"), all.x = TRUE
-    )
+    DF <- DF %>% left_join(finalPresSpecDt, by = c("geneID", "supertaxon"))
     DF$presSpec <- ifelse(
         DF$presSpec < percentCO[1] | DF$presSpec > percentCO[2], 0, DF$presSpec
     )
 
-    DF$orthoID <- as.character(DF$orthoID)
-    DF$orthoID <- ifelse(DF$presSpec == 0, NA, DF$orthoID)
+    # Convert orthoID to character and set to NA where presSpec == 0
+    DF$orthoID <- ifelse(DF$presSpec == 0, NA, as.character(DF$orthoID))
+    # Conditionally update var1 and var2 based on orthoID being NA
     if (var1Rel == "protein") DF$var1[is.na(DF$orthoID)] <- NA
     if (var2Rel == "protein") DF$var2[is.na(DF$orthoID)] <- NA
+    # Set presSpec to 0 where orthoID is NA
     DF$presSpec[is.na(DF$orthoID)] <- 0
-
+    # Set paralog to 1 if flag == 1
     if (flag == 1) DF$paralog <- 1
-
-    DF <- droplevels(DF)
-    DF$geneID <- factor(DF$geneID)
-    DF$supertaxon <- factor(DF$supertaxon)
+    # Dropping unused levels and ensuring geneID and supertaxon are factors
+    DF <- DF %>% droplevels() %>% mutate(
+        geneID = factor(geneID), supertaxon = factor(supertaxon)
+    )
 
     aggregate_scores <- function(df, var, aggBy) {
-        if (nrow(df) > 0) {
-            return(
-                stats::aggregate(
-                    df[[var]], by = list(df$supertaxon, df$geneID), FUN = aggBy
-                )
-            )
+        if (nrow(df) == 0) {
+            # Return an empty data frame
+            return(data.frame(
+                supertaxon=character(0), geneID=character(0), value=numeric(0)
+            ))
         }
-        return(
-            data.frame(
-                Group.1 = character(0), Group.2 = character(0), x = numeric(0)
-            )
+        aggregated <- stats::aggregate(
+            df[[var]], by = list(df$supertaxon, df$geneID), FUN = aggBy
         )
+        colnames(aggregated) <- c("supertaxon", "geneID", "value")
+        return(aggregated)
     }
 
-    mVar1Dt <- aggregate_scores(DF[!is.na(DF$var1), ], "var1", var1AggregateBy)
-    colnames(mVar1Dt) <- c("supertaxon", "geneID", "mVar1")
+    mVar1Dt <- aggregate_scores(
+        DF[!is.na(DF$var1), ], "var1", var1AggregateBy
+    ) %>% dplyr::rename(mVar1 = value)
 
     mVar2Dt <- aggregate_scores(DF[!is.na(DF$var2), ], "var2", var2AggregateBy)
     if (nrow(mVar2Dt) == 0) {
-        mVar2Dt <- data.frame(
-            supertaxon = DF$supertaxon, geneID = DF$geneID, mVar2 = 0
-        )
+        mVar2Dt <- unique(DF[, c("supertaxon", "geneID")]) %>%
+            dplyr::mutate(mVar2 = 0)
+    } else {
+        mVar2Dt <- mVar2Dt %>% dplyr::rename(mVar2 = value)
     }
-    colnames(mVar2Dt) <- c("supertaxon", "geneID", "mVar2")
 
-    scoreDf <- merge(mVar1Dt, mVar2Dt, by = c("supertaxon", "geneID"), all=TRUE)
-    DF <- merge(DF, scoreDf, by = c("geneID", "supertaxon"), all.x = TRUE)
+    scoreDf <- dplyr::full_join(mVar1Dt, mVar2Dt, by = c("supertaxon","geneID"))
+    DF <- dplyr::left_join(DF, scoreDf, by = c("geneID", "supertaxon"))
 
     if (groupByCat) {
         if (is.null(catDt)) {
@@ -664,7 +663,7 @@ filterProfileData <- function(
                 supertaxon = levels(DF$supertaxon), geneID = levels(DF$geneID)
             ), catDt, by = "geneID", all.x = TRUE
         )
-        DF <- merge(dfCat, DF, by = c("geneID", "supertaxon"), all.x = TRUE)
+        DF <- dplyr::left_join(dfCat, DF, by = c("geneID", "supertaxon"))
         DF$category <- DF$group
     }
 
@@ -860,7 +859,8 @@ fromInputToProfile <- function(
         inputTaxonID, rankName, refTaxon, taxaTree, sortedTaxonList, taxDB
     )
     # count present taxa in each supertaxon
-    taxaCount <- sortedInputTaxa %>% dplyr::count(supertaxon)
+    taxaCount <- sortedInputTaxa %>% dplyr::group_by(supertaxon) %>%
+        summarise(n = n(), .groups = "drop")
     # parse info (additional values...) into profile df
     fullMdData <- parseInfoProfile(inputDf, sortedInputTaxa, taxaCount)
     # filter profile

@@ -19,6 +19,7 @@
 #' @author Vinh Tran {tran@bio.uni-frankfurt.de}
 
 source("R/functions.R")
+rtCheck <- FALSE
 
 createProfilePlotUI <- function(id) {
     ns <- NS(id)
@@ -97,31 +98,41 @@ createProfilePlot <- function(
     # data for heatmap ---------------------------------------------------------
     dataHeat <- reactive({
         if (is.null(data())) stop("Profile data is NULL!")
+        if (rtCheck) {
+            checkpointp101 <- Sys.time()
+            print(paste("checkpoint-P101 - before data heatmap",checkpointp101))
+        } 
+        saveRDS(clusteredDataHeat(),"~/Downloads/clusteredDataHeat.rds")
         if (typeProfile() == "customizedProfile") {
             if (is.null(inTaxa()) | is.null(inSeq())) return()
-            dataHeat <- dataCustomizedPlot(data(), inTaxa(), inSeq())
             if (applyCluster() == TRUE) {
                 dataHeat <- dataCustomizedPlot(
                     clusteredDataHeat(), inTaxa(), inSeq()
                 )
-            }
+            } else { dataHeat <- dataCustomizedPlot(data(), inTaxa(), inSeq()) }
         } else {
-            dataHeat <- dataMainPlot(data())
             if (applyCluster() == TRUE) {
                 dataHeat <- dataMainPlot(clusteredDataHeat())
-            }
+            } else { dataHeat <- dataMainPlot(data()) }
         }
         # add all input taxa (if available)
         if (!(is.null(allTaxa()))) {
-            mergedDf <- merge(
-                dataHeat, allTaxa(), by = c("supertaxonID","supertaxon"),
-                all = TRUE
-            )
-            mergedDf$geneID[is.na(mergedDf$geneID)] <- dataHeat$geneID[1]
-            mergedDf$supertaxon <- factor(
-                mergedDf$supertaxon, levels = levels(allTaxa()$supertaxon)
+            mergedDf <- dataHeat %>% full_join(
+                allTaxa(), by = c("supertaxonID", "supertaxon")
+            ) %>% mutate(
+                geneID = ifelse(is.na(geneID), dataHeat$geneID[1], geneID),
+                supertaxon = factor(
+                    supertaxon, levels = levels(allTaxa()$supertaxon)
+                )
             )
             return(mergedDf)
+        }
+        if (rtCheck) {
+            checkpointp102 <- Sys.time()
+            print(paste(
+                "checkpoint-P102 - data heatmap done", checkpointp102, 
+                " --- ",  checkpointp102 - checkpointp101
+            ))   
         }
         return(dataHeat)
     })
@@ -133,9 +144,31 @@ createProfilePlot <- function(
             if (length(inSeq()) == 0 || length(inTaxa()) == 0) return()
             if ("all" %in% inSeq() & "all" %in% inTaxa()) return()
         }
-        if (mode() == "fast" & typeProfile() != "customizedProfile")
-            return(heatmapPlottingFast(dataHeat(), parameters()))
-        return(heatmapPlotting(dataHeat(), parameters()))
+        if (rtCheck) {
+            checkpointp201 <- Sys.time()
+            print(paste("checkpoint-P201 - before basic plot", checkpointp201))
+        }
+        if (mode() == "fast" & typeProfile() != "customizedProfile") {
+            hpf <- heatmapPlottingFast(dataHeat(), parameters())
+            if (rtCheck) {
+                checkpointp202 <- Sys.time()
+                print(paste(
+                    "checkpoint-P202 - basic plot done", checkpointp202, 
+                    " --- ",  checkpointp202 - checkpointp201
+                ))
+            }
+            return(hpf)
+        } else {
+            hp <- heatmapPlotting(dataHeat(), parameters())
+            if (rtCheck) {
+                checkpointp202 <- Sys.time()
+                print(paste(
+                    "checkpoint-P202 - basic plot done", checkpointp202, 
+                    " --- ",  checkpointp202 - checkpointp201
+                ))
+            }
+            return(hp)
+        }
     })
 
     # get superRank ------------------------------------------------------------
@@ -147,6 +180,10 @@ createProfilePlot <- function(
     # render heatmap profile ---------------------------------------------------
     output$plot <- renderPlot({
         if (is.null(basicProfile())) return()
+        if (rtCheck) {
+            checkpointp301 <- Sys.time()
+            print(paste("checkpoint-P301 - before final plot", checkpointp301))
+        }
         withProgress(message = 'PLOTTING...', value = 0.5, {
             p <- highlightProfilePlot(
                 basicProfile(), dataHeat(), taxonHighlight(), rankSelect(),
@@ -154,18 +191,25 @@ createProfilePlot <- function(
             )
             refLine <- TRUE
             if (mode() == "fast") refLine <- FALSE
-            addRankDivisionPlot(
+            p <- addRankDivisionPlot(
                 p, dataHeat(), taxDB(), rankSelect(), getSuperRank(),
                 parameters()$xAxis, parameters()$font, 
                 parameters()$groupLabelSize, parameters()$groupLabelDist, 
                 parameters()$groupLabelAngle, refLine
             )
+            if (rtCheck) {
+                checkpointp302 <- Sys.time()
+                print(paste(
+                    "checkpoint-P302 - final plot done", checkpointp302, 
+                    " --- ",  checkpointp302 - checkpointp301
+                ))
+            }
+            return(p)
         })
     })
 
     output$plot.ui <- renderUI({
         ns <- session$ns
-
         if (typeProfile() == "customizedProfile") {
             if (is.null(inSeq()[1]) | is.null(inTaxa()[1])) return()
             else if (inSeq()[1] == "all" & inTaxa()[1] == "all")  return()
@@ -326,14 +370,23 @@ createProfilePlot <- function(
     # ** download data of subplot ----------------------------------------------
     output$dataSubDownload <- downloadHandler(
         filename = function() {
-            c("subData.out")
+            c("subData.txt")
         },
         content = function(file){
             dataOut <- brushedData() %>% select(
                 geneID, supertaxonID, supertaxon, orthoID, var1, var2, geneName
             )
             if (!(identical(dataOut$geneID, dataOut$geneName)))
-                dataOut <- subset(dataOut, select = -c(geneName))
+                dataOut <- dataOut %>% select(-c(geneName))
+            contains_id <- mapply(function(id, name) {
+                grepl(paste0("@", id, "@"), name)
+            }, dataOut$supertaxonID, dataOut$orthoID)
+            if (all(contains_id == TRUE))
+                dataOut <- dataOut %>% mutate(
+                    supertaxonID = paste0("ncbi", supertaxonID)
+                ) %>% select(
+                    geneID, ncbiID = supertaxonID, orthoID, var1, var2
+                )
             write.table(
                 dataOut, file, sep = "\t", row.names = FALSE, quote = FALSE
             )
@@ -480,6 +533,7 @@ createProfilePlot <- function(
             }
         }
     })
+    
     
     return(selectedpointInfo)
 }

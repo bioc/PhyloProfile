@@ -85,7 +85,8 @@ getOmaDomainFromURL <- function(domainURL = NULL) {
     } else {
         domains <- domainURL$regions
     }
-
+    
+    if (length(domains) == 0) return(list())
     pos <- strsplit(domains$location, ":")
     allPos <- unlist(pos)
     start <- allPos[c(TRUE, FALSE)]
@@ -214,7 +215,7 @@ getDataForOneOma <- function(seedID = NULL, orthoType = "OG"){
         length = unlist(length),
         domains = unlist(domains),
         seed = rep(seedID, length(idList)),
-        stringsAsFactors = FALSE
+        stringsAsFactors = TRUE
     ))
 }
 

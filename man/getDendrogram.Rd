@@ -24,7 +24,7 @@ profiles <- getDataClustering(
 distMethod <- "mutualInformation"
 distanceMatrix <- getDistanceMatrix(profiles, distMethod)
 clusterMethod <- "complete"
-dd <- clusterDataDend(distanceMatrix, clusterMethod)
+dd <- clusterDataDend(as.dist(distanceMatrix), clusterMethod)
 getDendrogram(dd)
 }
 \seealso{

@@ -4,7 +4,7 @@
 \alias{dimReduction}
 \title{Perform dimension reduction 2D}
 \usage{
-dimReduction(data4dimRed = NULL, by = "taxa", type = "binary", 
+dimReduction(data4dimRed = NULL, by = "taxa", type = "binary",
     randomSeed = 123, reductionTechnique = "umap", dimension = "2d",
     tsneIter = 1000)
 }
@@ -17,7 +17,7 @@ dimReduction(data4dimRed = NULL, by = "taxa", type = "binary",
 
 \item{randomSeed}{random seed. Default: 123}
 
-\item{reductionTechnique}{dimensionality reduction technique, either "umap" 
+\item{reductionTechnique}{dimensionality reduction technique, either "umap"
 (default) or "tsne"}
 
 \item{dimension}{either "2d" (default) or "3d"}

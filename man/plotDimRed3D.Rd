@@ -4,8 +4,8 @@
 \alias{plotDimRed3D}
 \title{Create dimension reduction 3D plot}
 \usage{
-plotDimRed3D(plotDf = NULL, legendPos = "bottom", 
-    colorPalette = "Set2", transparent = 0,highlightTaxa = NULL, 
+plotDimRed3D(plotDf = NULL, legendPos = "bottom",
+    colorPalette = "Set2", transparent = 0,highlightTaxa = NULL,
     dotZoom = 0)
 }
 \arguments{

@@ -4,16 +4,16 @@
 \alias{createDimRedPlotData}
 \title{Generate data for dimension reduction plot}
 \usage{
-createDimRedPlotData(dimRedCoord = NULL, data4dimRed = NULL, 
+createDimRedPlotData(dimRedCoord = NULL, data4dimRed = NULL,
     freqCutoff = c(0,200), excludeTaxa = "None", currentNCBIinfo = NULL)
 }
 \arguments{
-\item{dimRedCoord}{data contains DIM reduction coordinates (from 
+\item{dimRedCoord}{data contains DIM reduction coordinates (from
 dimReduction)}
 
 \item{data4dimRed}{data for dimension reduction (from prepareDimRedData())}
 
-\item{freqCutoff}{gene/taxon frequency cutoff range. Any labels that are 
+\item{freqCutoff}{gene/taxon frequency cutoff range. Any labels that are
 outside of this range will be assigned as [Other]}
 
 \item{excludeTaxa}{hide taxa from plot. Default: "None"}

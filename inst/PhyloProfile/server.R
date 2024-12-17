@@ -3,6 +3,9 @@ sourceFiles = list.files( path = "R", pattern = "*.R$", full.names = TRUE)
 lapply(sourceFiles, source, .GlobalEnv)
 library(PhyloProfile)
 
+checkpoint0 <- Sys.time()
+rtCheck <- FALSE
+
 #' set size limit for input (9999mb)
 options(
     scipen = 999,
@@ -357,7 +360,7 @@ shinyServer(function(input, output, session) {
     output$inputCheck.ui <- renderUI({
         filein <- input$mainInput
         if (is.null(filein)) return()
-        inputType <- checkInputValidity(filein$datapath)
+        inputType <- inputType()
 
         if (inputType[1] == "noGeneID") {
             shinyBS::updateButton(session, "do", disabled = TRUE)
@@ -528,8 +531,7 @@ shinyServer(function(input, output, session) {
     output$checkOmaInput <- reactive({
         filein <- input$mainInput
         if (is.null(filein)) return()
-        inputType <- checkInputValidity(filein$datapath)
-        inputType == "oma"
+        inputType() == "oma"
     })
     outputOptions(output, "checkOmaInput", suspendWhenHidden = FALSE)
 
@@ -1023,19 +1025,26 @@ shinyServer(function(input, output, session) {
     # * predict reference species ----------------------------------------------
     refSpec <- reactive({
         req(getMainInput())
-        longDataframe <- getMainInput()
-        longDataframe$joinedID <- paste(
-            longDataframe$geneID, longDataframe$ncbiID
+        if (rtCheck) {
+            checkpoint121 <- Sys.time()
+            print(paste("checkpoint121 - before predict refspec",checkpoint121))
+        }
+        tmp <- as.data.table(
+            getMainInput() %>% dplyr::select(geneID, ncbiID) %>% distinct()
         )
-        tmpDf <- as.data.frame(
-            do.call(
-                rbind, strsplit(unique(longDataframe$joinedID), " ")
-            )
-        )
-        refspecID <- names(sort(table(tmpDf$V2),decreasing = TRUE)[1])
+        
+        refspecID <- tmp[, .N, by = ncbiID][order(-N)][1, ncbiID]
         refsecpName <- getInputTaxaName(
             input$rankSelect, refspecID, getTaxDBpath()
         )
+        if (rtCheck) {
+            checkpoint122 <- Sys.time()
+            print(
+                paste("checkpoint122 - predict refspec done", checkpoint122, 
+                      " --- ",  checkpoint122 - checkpoint121)
+            )
+        }
+        
         return(refsecpName)
     })
 
@@ -1140,6 +1149,11 @@ shinyServer(function(input, output, session) {
                         selectedRefspec <- predRefspec$fullName
                 }
                 if (length(choice$fullName) > 0) {
+                    # remove cache first
+                    updateSelectizeInput(
+                        session, "inSelect", choices = NULL, server = TRUE
+                    )
+                    # then update the list
                     updateSelectizeInput(
                         session, "inSelect", "", server = TRUE,
                         choices = as.list(levels(choice$fullName)),
@@ -1659,7 +1673,7 @@ shinyServer(function(input, output, session) {
 
         filein <- input$mainInput
         req(filein)
-        inputType <- checkInputValidity(filein$datapath)
+        inputType <- inputType()
 
         if (inputType == "xml" |
             inputType == "long" |
@@ -1971,8 +1985,7 @@ shinyServer(function(input, output, session) {
     finalOmaDf <- reactive({
         filein <- input$mainInput
         req(filein)
-        inputType <- checkInputValidity(filein$datapath)
-        if (inputType == "oma") {
+        if (inputType() == "oma") {
             if (input$getDataOma[1] == 0) return()
             omaIDs <- fread(
                 file = filein$datapath,
@@ -2010,10 +2023,23 @@ shinyServer(function(input, output, session) {
         } else inputNameDt <- NULL
         return(inputNameDt)
     })
+    
+    # * check main input format (wide, long, xml, fasta, or invalidFormat) -----
+    inputType <- reactive ({
+        req(input$mainInputType)
+        filein <- input$mainInput
+        if (is.null(filein)) return()
+        return(checkInputValidity(filein$datapath))
+    })
 
     # * convert main input file in any format into long format dataframe -------
     getMainInput <- reactive({
         req(input$mainInputType)
+        if (rtCheck) {
+            checkpoint11 <- Sys.time()
+            print(paste("checkpoint11 - before reading main input",checkpoint11))
+        }
+        
         withProgress(message = 'Reading main input...', value = 0.5, {
             if (input$mainInputType == "folder") {
                 req(getMainInputDir())
@@ -2032,36 +2058,33 @@ shinyServer(function(input, output, session) {
                 } else {
                     filein <- input$mainInput
                     if (is.null(filein)) return()
-                    inputType <- checkInputValidity(filein$datapath)
-                    if (inputType == "oma") {
+                    if (inputType() == "oma") {
                         if (input$getDataOma[1] == 0) return()
                         longDataframe <- createProfileFromOma(finalOmaDf())
                         longDataframe <- as.data.frame(unclass(longDataframe))
-                    } else longDataframe <- createLongMatrix(filein$datapath)
-                }
-
-                # convert geneID, ncbiID and orthoID into factor and
-                # var1, var2 into numeric
-                for (i in seq_len(3)) {
-                    longDataframe[, i] <- as.factor(longDataframe[, i])
-                }
-                if (ncol(longDataframe) > 3 & ncol(longDataframe) < 6) {
-                    for (j in seq(4, ncol(longDataframe))){
-                        longDataframe[,j] <- suppressWarnings(
-                            as.numeric(as.character(longDataframe[,j]))
-                        )
+                    } else {
+                        longDataframe <- createLongMatrix(filein$datapath)
                     }
                 }
-                if (ncol(longDataframe) == 6)
-                    longDataframe[, 6] <- as.factor(longDataframe[, 6])
-                # remove duplicated lines
-                longDataframe <- longDataframe[!duplicated(longDataframe),]
-                # remove fdogMA orthologs
-                if (input$showAllTaxa == FALSE) {
-                    longDataframe <- longDataframe[
-                        longDataframe$orthoID != "fdogMA",
-                    ]
+                
+                if (input$demoData == "arthropoda" | input$demoData == "ampk-tor") {
+                    # convert geneID, ncbiID and orthoID into factor and
+                    # var1, var2 into numeric
+                    for (i in seq_len(3)) {
+                        longDataframe[, i] <- as.factor(longDataframe[, i])
+                    }
+                    if (ncol(longDataframe) > 3 & ncol(longDataframe) < 6) {
+                        for (j in seq(4, ncol(longDataframe))){
+                            longDataframe[,j] <- suppressWarnings(
+                                as.numeric(as.character(longDataframe[,j]))
+                            )
+                        }
+                    }
                 }
+                
+                # remove fdogMA orthologs if required
+                if (input$showAllTaxa == FALSE)
+                    longDataframe <- longDataframe[longDataframe$orthoID != "fdogMA",]
             }
             # update number of genes to plot based on input
             if (nlevels(as.factor(longDataframe$geneID)) <= 1500) {
@@ -2083,6 +2106,14 @@ shinyServer(function(input, output, session) {
                 }
             }
             # return
+            if (rtCheck) {
+                checkpoint12 <- Sys.time()
+                print(paste(
+                    "checkpoint12 - reading main input done at", checkpoint12, 
+                    " --- ",  checkpoint12 - checkpoint11
+                ))
+            }
+            
             return(longDataframe)
         })
     })
@@ -2093,7 +2124,7 @@ shinyServer(function(input, output, session) {
             if (v$doPlot == FALSE) return()
             if (input$demoData == "none") {
                 filein <- input$mainInput
-                inputType <- checkInputValidity(filein$datapath)
+                inputType <- inputType()
             } else inputType <- "demo"
 
             if (inputType == "oma") {
@@ -2181,12 +2212,20 @@ shinyServer(function(input, output, session) {
 
     # * get ID list of input taxa from main input ------------------------------
     inputTaxonID <- reactive({
+        if (rtCheck) st <- Sys.time()
         if (input$demoData == "arthropoda" |
             input$demoData == "ampk-tor" |
             length(unkTaxa()) == 0) {
             withProgress(message = 'Getting input taxon IDs...', value = 0.5, {
                 longDataframe <- getMainInput()
                 inputTaxa <- getInputTaxaID(longDataframe)
+                if (rtCheck) {
+                    checkpoint21 <- Sys.time()
+                    print(paste(
+                        "checkpoint21 - get input tax IDs done", checkpoint21, 
+                        " --- ",  checkpoint21 - st
+                    ))
+                }
                 return(inputTaxa)
             })
         } else return()
@@ -2195,6 +2234,7 @@ shinyServer(function(input, output, session) {
     # * get NAME list of all (super)taxa ---------------------------------------
     inputTaxonName <- reactive({
         req(input$rankSelect)
+        if (rtCheck) st <- Sys.time()
         if (is.null(getMainInput()) & input$demoData == "none") return()
         if (length(unkTaxa()) > 0) return()
         if (input$rankSelect == "") return()
@@ -2202,6 +2242,13 @@ shinyServer(function(input, output, session) {
             inputTaxaName <- getInputTaxaName(
                 input$rankSelect, inputTaxonID(), getTaxDBpath()
             )
+            if (rtCheck) {
+                checkpoint31 <- Sys.time()
+                print(paste(
+                    "checkpoint31 - get input tax names done", checkpoint31, 
+                    " --- ",  checkpoint31 - st
+                ))    
+            }
             return(inputTaxaName)
         })
     })
@@ -2211,6 +2258,12 @@ shinyServer(function(input, output, session) {
         req(isTruthy(v$doPlot)|isTruthy(w$doCusPlot))
         req(input$rankSelect)
         req(input$inSelect)
+        
+        if (rtCheck) {
+            checkpoint41 <- Sys.time()
+            print(paste("checkpoint41 - before sorting taxa", checkpoint41))
+        }
+        
         withProgress(message = 'Sorting input taxa...', value = 0.5, {
             if (input$mainInputType == "folder") {
                 req(getMainInputDir())
@@ -2260,6 +2313,14 @@ shinyServer(function(input, output, session) {
                 )
             }
             # return
+            if (rtCheck) {
+                checkpoint42 <- Sys.time()
+                print(paste(
+                    "checkpoint42 - sorting taxa done", checkpoint42, " --- ",  
+                    checkpoint42 - checkpoint41
+                ))
+            }
+            
             return(sortedOut)
         })
     })
@@ -2271,6 +2332,7 @@ shinyServer(function(input, output, session) {
             input$applyFilterCustom
             input$applyFilter
         }
+        if (rtCheck) st <- Sys.time()
         allTaxa <- sortedtaxaList()
         allTaxa <- allTaxa[,c("supertaxonID", "supertaxon")]
         allTaxa$supertaxon <- factor(
@@ -2280,6 +2342,13 @@ shinyServer(function(input, output, session) {
             levels = substr(
                 levels(as.factor(allTaxa$supertaxon)), 8,
                 nchar(levels(as.factor(allTaxa$supertaxon)))))
+        if (rtCheck) {
+            checkpoint51 <- Sys.time()
+            print(paste(
+                "checkpoint51 - get all input (super)taxa done", checkpoint51, 
+                " --- ",  checkpoint51 - st
+            ))
+        }
         if (input$showAllTaxa) {
             return(allTaxa[!duplicated(allTaxa),])
         } else return()
@@ -2288,8 +2357,16 @@ shinyServer(function(input, output, session) {
     # * count taxa for each supertaxon -----------------------------------------
     getCountTaxa <- reactive({
         req(sortedtaxaList())
+        if (rtCheck) st <- Sys.time()
         taxaCount <- sortedtaxaList() %>% dplyr::group_by(supertaxon) %>%
             dplyr::summarise(n = n(), .groups = "drop")
+        if (rtCheck) {
+            checkpoint61 <- Sys.time()
+            print(paste(
+                "checkpoint61 - count taxa done", checkpoint61, " --- ",
+                checkpoint61 - st
+            ))
+        }
         return(taxaCount)
     })
 
@@ -2297,6 +2374,10 @@ shinyServer(function(input, output, session) {
     preData <- reactive({
         req(isTruthy(v$doPlot)|isTruthy(w$doCusPlot))
         req(input$mainInputType)
+        if (rtCheck) {
+            checkpoint71 <- Sys.time()
+            print(paste("checkpoint71 - before subseting input", checkpoint71))
+        }
         ### if input a folder
         if (input$mainInputType == "folder") {
             req(getMainInputDir())
@@ -2372,6 +2453,13 @@ shinyServer(function(input, output, session) {
                 )
             }
             data$geneID <- droplevels(data$geneID)
+            if (rtCheck) {
+                checkpoint72 <- Sys.time()
+                print(paste(
+                    "checkpoint72 - subseting input done", checkpoint72, 
+                    " --- ",  checkpoint72 - checkpoint71
+                ))
+            }
             return(data)
         })
     })
@@ -2380,6 +2468,10 @@ shinyServer(function(input, output, session) {
     getFullData <- reactive({
         req(isTruthy(v$doPlot)|isTruthy(w$doCusPlot))
         req(input$mainInputType)
+        if (rtCheck) {
+            checkpoint81 <- Sys.time()
+            print(paste("checkpoint81 - before get full data", checkpoint81))
+        }
         if (input$mainInputType == "folder") {
             req(getMainInputDir())
             if (length(checkMainInputDir()) == 4) {
@@ -2401,12 +2493,26 @@ shinyServer(function(input, output, session) {
                 } else {
                     coorthologCutoffMax <- isolate(input$coortholog)
                 }
+                if (rtCheck) {
+                    checkpoint81a <- Sys.time()
+                    print(paste(
+                        "checkpoint81a - start get full data", checkpoint81a, 
+                        " --- ", checkpoint81a- checkpoint81
+                    ))
+                }
                 fullMdData <- parseInfoProfile(
                     inputDf = preData(),
                     sortedInputTaxa = sortedtaxaList(),
                     taxaCount = getCountTaxa(),
                     coorthoCOMax = coorthologCutoffMax
                 )
+                if (rtCheck) {
+                    checkpoint82 <- Sys.time()
+                    print(paste(
+                        "checkpoint82 - get full data done", checkpoint82, 
+                        " --- ",  checkpoint82- checkpoint81a
+                    ))
+                }
                 return(fullMdData)
             })
         }
@@ -2418,6 +2524,10 @@ shinyServer(function(input, output, session) {
         {
             input$applyFilterCustom
             input$applyFilter
+        }
+        if (rtCheck) {
+            checkpoint91 <- Sys.time()
+            print(paste("checkpoint91 - before filter full data", checkpoint91))
         }
         withProgress(message = 'Creating data for plotting...', value = 0.5, {
             # check input file
@@ -2478,6 +2588,13 @@ shinyServer(function(input, output, session) {
             } else colorByGroup = FALSE
 
             # create data for heatmap plotting
+            if (rtCheck) {
+                checkpoint91a <- Sys.time()
+                print(paste(
+                    "checkpoint91a - start filter full data", checkpoint91a, 
+                    " --- ", checkpoint91a- checkpoint91
+                ))
+            }
             filteredDf <- filterProfileData(
                 DF = getFullData(),
                 taxaCount = getCountTaxa(),
@@ -2493,6 +2610,13 @@ shinyServer(function(input, output, session) {
                 var1AggregateBy = input$var1AggregateBy,
                 var2AggregateBy = input$var2AggregateBy
             )
+            if (rtCheck) {
+                checkpoint92 <- Sys.time()
+                print(paste(
+                    "checkpoint92 - filter full data done", checkpoint92, 
+                    " --- ",  checkpoint92- checkpoint91a
+                ))
+            }
             return(filteredDf)
         })
     })
@@ -2501,13 +2625,30 @@ shinyServer(function(input, output, session) {
     dataHeat <- reactive({
         req(isTruthy(v$doPlot)|isTruthy(w$doCusPlot))
         req(filteredDataHeat())
+        if (rtCheck) {
+            checkpoint101 <- Sys.time()
+            print(paste("checkpoint101 - before reduce profile", checkpoint101))
+        }
         dataHeat <- reduceProfile(filteredDataHeat())
+        if (rtCheck) {
+            checkpoint102 <- Sys.time()
+            print(paste(
+                "checkpoint102 - reduce profile done", checkpoint102, " --- ",
+                checkpoint102- checkpoint101
+            ))
+        }
         return(dataHeat)
     })
 
     # * clustered heatmap data -------------------------------------------------
     clusteredDataHeat <- reactive({
         req(isTruthy(v$doPlot)|isTruthy(w$doCusPlot))
+        if (rtCheck) {
+            checkpoint111 <- Sys.time()
+            print(paste(
+                "checkpoint111 - before cluster heatmap data", checkpoint111
+            ))
+        }
         dataHeat <- dataHeat()
         if (nlevels(dataHeat$supertaxon) == 1) return(dataHeat)
         if (!is.null(i_clusterMethod)) clusterMethod <- i_clusterMethod
@@ -2518,7 +2659,7 @@ shinyServer(function(input, output, session) {
                 dat <- getProfiles()
                 # do clustering based on distance matrix
                 row.order <- fastcluster::hclust(
-                    getDistanceMatrixProfiles(), method = clusterMethod
+                    as.dist(getDistanceMatrixProfiles()), method = clusterMethod
                 )$order
 
                 # re-order distance matrix accoring to clustering
@@ -2541,6 +2682,13 @@ shinyServer(function(input, output, session) {
                     dataHeat$geneName, levels = orderedName
                 )
                 dataHeat <- dataHeat[!is.na(dataHeat$geneID),]
+                if (rtCheck) {
+                    checkpoint112 <- Sys.time()
+                    print(paste(
+                        "checkpoint112 - cluster heatmap data done", 
+                        checkpoint112, " --- ",  checkpoint112 - checkpoint111
+                    ))
+                }
                 return(dataHeat)
             })
         } else return(dataHeat)
@@ -2580,6 +2728,14 @@ shinyServer(function(input, output, session) {
     # * get list of taxa for highlighting --------------------------------------
     # output$taxonHighlight.ui <- renderUI({
     observe({
+        req(getMainInput())
+        req(v$doPlot)
+        if (rtCheck) {
+            checkpoint131 <- Sys.time()
+            print(paste(
+                "checkpoint131 - before render taxa hghlight", checkpoint131
+            ))
+        }
         filein <- input$mainInput
         if (
             input$demoData == "arthropoda" | input$demoData == "ampk-tor" |
@@ -2601,15 +2757,37 @@ shinyServer(function(input, output, session) {
                 choices = out
             )
         }
+        if (rtCheck) {
+            checkpoint132 <- Sys.time()
+            print(paste(
+                "checkpoint132 - render tax highlight done", checkpoint132, 
+                " --- ",  checkpoint132 - checkpoint131
+            ))
+        }
     })
 
     # * get list of genes for highlighting -------------------------------------
     getAllGenes <- function() {
+        req(getMainInput())
+        req(v$doPlot)
         df <- getMainInput()
-        idNameDf <- unique(df[,c("geneID","geneName")])
+        if (rtCheck) {
+            checkpoint141 <- Sys.time()
+            print(paste(
+                "checkpoint141 - before render gene highlight", checkpoint141
+            ))
+        }
+        idNameDf <- df %>% dplyr::select(geneID, geneName) %>% distinct()
         idNameList <- setNames(
             as.character(idNameDf$geneID), as.character(idNameDf$geneName)
         )
+        if (rtCheck) {
+            checkpoint142 <- Sys.time()
+            print(paste(
+                "checkpoint142 - render gene highlight done", checkpoint142, 
+                " --- ",  checkpoint142 - checkpoint141
+            ))
+        }
         return(idNameList)
     }
 
@@ -2656,7 +2834,12 @@ shinyServer(function(input, output, session) {
 
     # * update plot size based on input ----------------------------------------
     observe({
+        req(getMainInput())
         longDataframe <- getMainInput()
+        if (rtCheck) {
+            checkpoint151 <- Sys.time()
+            print(paste("checkpoint151 - before update plot size", checkpoint151))
+        }
         req(longDataframe)
         req(input$endIndex)
         req(input$plotMode)
@@ -2691,6 +2874,13 @@ shinyServer(function(input, output, session) {
             }
             updateNumericInput(session, "height", value = hv)
         }
+        if (rtCheck) {
+            checkpoint152 <- Sys.time()
+            print(paste(
+                "checkpoint152 - update plot size done", checkpoint152, 
+                " --- ",  checkpoint152 - checkpoint151
+            ))
+        }
     })
 
     observe({
@@ -2721,7 +2911,12 @@ shinyServer(function(input, output, session) {
     # * parameters for the main profile plot -----------------------------------
     getParameterInputMain <- reactive({
         input$updateBtn
-
+        if (rtCheck) {
+            checkpoint161 <- Sys.time()
+            print(paste(
+                "checkpoint161 - before get main plot para", checkpoint161
+            ))
+        }
         colorByGroup <- input$colorByGroup
         # get category colors
         catColors <- NULL
@@ -2801,6 +2996,13 @@ shinyServer(function(input, output, session) {
                     "colorVar" = input$colorVar
                 )
             )
+        }
+        if (rtCheck) {
+            checkpoint162 <- Sys.time()
+            print(paste(
+                "checkpoint162 - get plot main para done", checkpoint162, 
+                " --- ",  checkpoint162 - checkpoint161
+            ))
         }
         return(inputPara)
     })
@@ -3310,7 +3512,7 @@ shinyServer(function(input, output, session) {
                             dimRedData, joinedSelTaxDf, by = "ncbiID"
                         ) %>% mutate(
                             Label = ifelse(!is.na(sel_label), sel_label, Label)
-                        ) %>% select(-c(supertaxonID, sel_label))
+                        ) %>% dplyr::select(-c(supertaxonID, sel_label))
                     }
                 }
                 # apply custom labels (if provided)
@@ -3610,7 +3812,7 @@ shinyServer(function(input, output, session) {
         }
         df <- as.data.frame(brushedDimRedData())
         if (nrow(df) > 0) {
-            specDf <- df %>% select(ncbiID, fullName, Label, Freq, n)
+            specDf <- df %>% dplyr::select(ncbiID, fullName, Label, Freq, n)
             colnames(specDf) <- c(
                 "NCBI taxon ID", "Taxon name", "Label", "Number of genes", "Freq"
             )
@@ -3656,10 +3858,10 @@ shinyServer(function(input, output, session) {
         }
         df <- as.data.frame(brushedDimRedData())
         if (nrow(df) > 0) {
-            removeDf <- df %>% select(where(~ all(. == -1)))
-            subDf <- df %>% select(-c(colnames(removeDf), Label, Freq, X, Y, n))
+            removeDf <- df %>% dplyr::select(where(~ all(. == -1)))
+            subDf <- df %>% dplyr::select(-c(colnames(removeDf), Label, Freq, X, Y, n))
             if ("fullName" %in% colnames(subDf))
-                subDf <- subDf %>% select(-c("fullName"))
+                subDf <- subDf %>% dplyr::select(-c("fullName"))
             if ("ncbiID" %in% colnames(df)) {
                 meltedDf <- data.frame(melt(
                     as.data.table(subDf),
@@ -3681,7 +3883,7 @@ shinyServer(function(input, output, session) {
             } else if (ncol(longDf) == 4) {
                 colnames(geneDf)[colnames(geneDf) == "value"] <- input$var1ID
             } else if (ncol(longDf) == 3) {
-                geneDf <- geneDf %>% select(geneID, ncbiID)
+                geneDf <- geneDf %>% dplyr::select(geneID, ncbiID)
             }
             # check gene IDs containing character "X" at the beginning
             geneDf$geneID <- as.character(geneDf$geneID)
@@ -3729,9 +3931,9 @@ shinyServer(function(input, output, session) {
         y <- input$dimRedHover$y
         hoveredDf <- nearPoints(
             dimRedPlotData(), input$dimRedHover, xvar = "X", yvar = "Y"
-        ) %>% select(ncbiID, Label, Freq, fullName)
+        ) %>% dplyr::select(ncbiID, Label, Freq, fullName)
         if (nrow(hoveredDf) > 0) {
-            hoveredDf <- hoveredDf %>% select(fullName, Freq)
+            hoveredDf <- hoveredDf %>% dplyr::select(fullName, Freq)
             colnames(hoveredDf) <- c("Taxon", "# genes")
             return(hoveredDf)
         } else return()
@@ -3743,7 +3945,7 @@ shinyServer(function(input, output, session) {
         y <- input$dimRedHover$y
         hoveredDf <- nearPoints(
             dimRedPlotData(), input$dimRedHover, xvar = "X", yvar = "Y"
-        ) %>% select(geneID, Freq)
+        ) %>% dplyr::select(geneID, Freq)
         if (nrow(hoveredDf) > 0) {
             colnames(hoveredDf) <- c("Gene", "# taxa")
             return(hoveredDf)
@@ -4045,7 +4247,7 @@ shinyServer(function(input, output, session) {
 
         if (input$demoData == "none") {
             filein <- input$mainInput
-            inputType <- checkInputValidity(filein$datapath)
+            inputType <- inputType()
             # get fata from oma
             if (inputType == "oma") {
                 fastaOut <- getSelectedFastaOma(finalOmaDf(), seqID)
@@ -4147,7 +4349,7 @@ shinyServer(function(input, output, session) {
             } else {
                 if (
                     input$mainInputType == "file" &
-                    checkInputValidity(input$mainInput$datapath) == "oma"
+                    inputType() == "oma"
                 ) {
                     shinyBS::updateButton(session, "doDomainPlot", disabled = FALSE)
                     if (lowestRank == input$rankSelect || infoTmp[[8]][1] == 1)
@@ -4264,7 +4466,7 @@ shinyServer(function(input, output, session) {
 
         if (input$demoData == "none") {
             filein <- input$mainInput
-            inputType <- checkInputValidity(filein$datapath)
+            inputType <- inputType()
             # get fata from oma
             if (inputType == "oma") {
                 allOmaDf <- finalOmaDf()
@@ -4334,7 +4536,7 @@ shinyServer(function(input, output, session) {
 
         if (input$demoData == "none") {
             filein <- input$mainInput
-            inputType <- checkInputValidity(filein$datapath)
+            inputType <- inputType()
             # get fata from oma
             if (inputType == "oma") {
                 allOmaDf <- finalOmaDf()
@@ -4706,6 +4908,13 @@ shinyServer(function(input, output, session) {
 
     # ** create profiles for calculating distance matrix -----------------------
     getProfiles <- reactive({
+        if (rtCheck) {
+            checkpointc101 <- Sys.time()
+            print(paste(
+                "checkpoint-C101 - before get profiles for clustering", 
+                checkpointc101
+            ))
+        }
         withProgress(message = 'Getting data for cluster...', value = 0.5, {
             req(dataHeat())
             if (is.null(input$profileType)) profileType <- i_profileType
@@ -4713,11 +4922,22 @@ shinyServer(function(input, output, session) {
             if (input$keepOrder == TRUE) {
                 fullDt <- getFullData()
                 tmpDf <- calcPresSpec(fullDt, getCountTaxa())
-                fullDt <- Reduce(
-                    function(x, y)
-                        merge(x, y, by = c("geneID", "supertaxon"), all.x=TRUE),
-                    list(fullDt, tmpDf))
-                fullDt$orthoID[fullDt$presSpec == 0] <- NA
+                fullDt <- fullDt %>%
+                    left_join(tmpDf, by = c("geneID", "supertaxon")) %>%
+                    mutate(orthoID = ifelse(
+                        presSpec == 0, NA, as.character(orthoID)
+                    )) %>% mutate(
+                        orthoID = factor(
+                            orthoID, levels=unique(as.character(fullDt$orthoID))
+                        )
+                    )
+                if (rtCheck) {
+                    checkpointc101a <- Sys.time()
+                    print(paste(
+                        "checkpoint-C101a - start get profiles for clustering", 
+                        checkpointc101a," --- ",checkpointc101a - checkpointc101
+                    ))
+                }
                 profiles <- getDataClustering(
                     fullDt,
                     profileType,
@@ -4726,6 +4946,13 @@ shinyServer(function(input, output, session) {
                 )
             }
             else {
+                if (rtCheck) {
+                    checkpointc101a <- Sys.time()
+                    print(paste(
+                        "checkpoint-C101b - start get profiles for clustering", 
+                        checkpointc101a," --- ",checkpointc101a - checkpointc101
+                    ))
+                }
                 profiles <- getDataClustering(
                     dataHeat(),
                     profileType,
@@ -4733,18 +4960,38 @@ shinyServer(function(input, output, session) {
                     input$var2AggregateBy
                 )
             }
+            if (rtCheck) {
+                checkpointc102 <- Sys.time()
+                print(paste(
+                    "checkpoint-C102 - get profiles for clustering done", 
+                    checkpointc102, " --- ",  checkpointc102 - checkpointc101a
+                ))   
+            }
             return(profiles)
         })
     })
 
     # ** calculate distance matrix ---------------------------------------------
     getDistanceMatrixProfiles <- reactive({
+        if (rtCheck) {
+            checkpointc201 <- Sys.time()
+            print(paste(
+                "checkpoint-C201 - before calculate dist matrix", checkpointc201
+            ))
+        }
         withProgress(message = 'Calculating distance matrix...', value = 0.5, {
             req(getProfiles())
             if (is.null(input$distMethod))
                 distMethod <- i_distMethod
             else distMethod <- input$distMethod
             distanceMatrix <- getDistanceMatrix(getProfiles(), distMethod)
+            if (rtCheck) {
+                checkpointc202 <- Sys.time()
+                print(paste(
+                    "checkpoint-C202 - calculate dist matrix done", 
+                    checkpointc202, " --- ",  checkpointc202 - checkpointc201
+                ))
+            }
             return(distanceMatrix)
         })
     })

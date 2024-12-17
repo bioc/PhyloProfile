@@ -4,8 +4,8 @@
 \alias{plotDimRed}
 \title{Create dimension reduction plot}
 \usage{
-plotDimRed(plotDf = NULL, legendPos = "bottom", 
-    colorPalette = "Set2", transparent = 0, textSize = 12, font = "Arial", 
+plotDimRed(plotDf = NULL, legendPos = "bottom",
+    colorPalette = "Set2", transparent = 0, textSize = 12, font = "Arial",
     highlightTaxa = NULL, dotZoom = 0)
 }
 \arguments{

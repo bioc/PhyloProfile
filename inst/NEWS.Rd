@@ -2,6 +2,12 @@
 \title{PhyloProfile news}
 \encoding{UTF-8}
 
+\section{Version 2.0.0}{
+  \itemize{
+    \item runtime significantly improved #105
+  }
+}
+
 \section{Version 1.20.4}{
   \itemize{
     \item added t-SNE dimension reduction

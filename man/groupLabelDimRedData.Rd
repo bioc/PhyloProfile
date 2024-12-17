@@ -2,7 +2,7 @@
 % Please edit documentation in R/umapClustering.R
 \name{groupLabelDimRedData}
 \alias{groupLabelDimRedData}
-\title{Reduce the number of labels for DIM reduction plot based on the 
+\title{Reduce the number of labels for DIM reduction plot based on the
 gene/taxon frequency}
 \usage{
 groupLabelDimRedData(data4dimRed = NULL, freqCutoff = c(0,200))
@@ -10,15 +10,15 @@ groupLabelDimRedData(data4dimRed = NULL, freqCutoff = c(0,200))
 \arguments{
 \item{data4dimRed}{data for dimension reduction (from prepareDimRedData)}
 
-\item{freqCutoff}{gene/taxon frequency cutoff range. Any labels that are 
+\item{freqCutoff}{gene/taxon frequency cutoff range. Any labels that are
 outside of this range will be assigned as [Other]}
 }
 \value{
-A dataframe similar to input data4dimRed, but with modified Label 
+A dataframe similar to input data4dimRed, but with modified Label
 column, where less frequent labels are grouped together as "Other"
 }
 \description{
-Reduce the number of labels for DIM reduction plot based on the 
+Reduce the number of labels for DIM reduction plot based on the
 gene/taxon frequency
 }
 \examples{

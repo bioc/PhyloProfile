@@ -4,7 +4,7 @@
 \alias{addDimRedTaxaColors}
 \title{Add colors for taxa in dimension reduction plot}
 \usage{
-addDimRedTaxaColors(plotDf = NULL, colorPalette = "Set2", 
+addDimRedTaxaColors(plotDf = NULL, colorPalette = "Set2",
     highlightTaxa = NULL)
 }
 \arguments{
@@ -15,7 +15,7 @@ addDimRedTaxaColors(plotDf = NULL, colorPalette = "Set2",
 \item{highlightTaxa}{list of taxa to be highlighted}
 }
 \value{
-A dataframe for dimension reduction plot with an additional column 
+A dataframe for dimension reduction plot with an additional column
 for the assigned color to each taxon
 }
 \description{

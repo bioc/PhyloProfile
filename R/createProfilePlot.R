@@ -14,20 +14,24 @@
 
 processOrthoID <- function(dataHeat = NULL) {
     if (is.null(dataHeat)) stop("Input data cannot be NULL!")
-    orthoID <- orthoFreqCount <- orthoFreqNew <- NULL
-    # predict if ortho ID in BIONF format
+    orthoID <- geneID <- orthoFreqCount <- orthoFreqNew <- supertaxonID <- NULL
+    orthoIDNew <- orthoFreq <- NULL
+    # Check if idFormat is "bionf"
     idFormat <- "other"
-    firstOrtho<-strsplit(as.character(dataHeat[1,]$orthoID),'|',fixed=TRUE)[[1]]
+    firstOrtho <- strsplit(dataHeat$orthoID[1],'\\|')[[1]]
+    firstGeneID <- dataHeat$geneID[1]
+    firstSupertaxonID <- dataHeat$supertaxonID[1]
     if (
-        length(firstOrtho) >= 3 && firstOrtho[1] == dataHeat[1,]$geneID &&
-        grepl(dataHeat[1,]$supertaxonID, firstOrtho[2])
-    ) idFormat <- "bionf"
+        length(firstOrtho) >= 3 && firstOrtho[1] == firstGeneID && 
+        grepl(firstSupertaxonID, firstOrtho[2])
+    ) { idFormat <- "bionf" }
+    
     # parse orthoID
     if (idFormat == "bionf") {
         dataHeat <- within(
             dataHeat,
             orthoMod <- data.frame(
-                do.call('rbind', strsplit(as.character(orthoID),'|',fixed=TRUE))
+                do.call('rbind', strsplit(orthoID,'|',fixed=TRUE))
             )
         )
         dataHeat$orthoIDNew <- paste(
@@ -39,29 +43,30 @@ processOrthoID <- function(dataHeat = NULL) {
         )
     }
     dataHeat <- dataHeat[ , !(names(dataHeat) %in% ("orthoMod"))]
-    # count occurrences of ortho IDs
-    countOrthoDf <- as.data.frame(table(dataHeat$orthoIDNew))
-    colnames(countOrthoDf) <- c("orthoIDNew", "orthoFreq")
-    dataHeat <- merge(dataHeat, countOrthoDf, by = "orthoIDNew", all.x = TRUE)
-    dataHeat$orthoFreq[dataHeat$orthoFreq > 1] <- "Multiple"
-    dataHeat$orthoFreq[dataHeat$orthoFreq == 1] <- "Single"
-
-    # assign "Multiple" for pair seed - supertaxon if
-    # any of their co-orthologs are multiple
-    dt <- data.table(dataHeat[, c("geneID", "supertaxonID", "orthoFreq")])
-    dt <- dt[!duplicated(dt),]
-    dt[, orthoFreqCount := .N, by = c("geneID", "supertaxonID")]
-    dt$orthoFreq[dt$orthoFreqCount == 2] <- "Multiple"
-    dt <- dt[,c("geneID", "supertaxonID", "orthoFreq")][
-        !duplicated(dt[,c("geneID", "supertaxonID", "orthoFreq")]),
-    ]
-    colnames(dt) <- c("geneID", "supertaxonID", "orthoFreqNew")
-    dataHeat <- merge(dataHeat, dt, by = c("geneID","supertaxonID"), all.x=TRUE)
-    dataHeat$orthoFreq <- dataHeat$orthoFreqNew
-    dataHeat <- subset(dataHeat, select = -c(orthoFreqNew))
+    # Count occurrences of orthoIDNew and label as "Single" or "Multiple"
+    countOrthoDf <- dataHeat %>%
+        count(orthoIDNew, name = "orthoFreq") %>%
+        mutate(orthoFreq = ifelse(orthoFreq > 1, "Multiple", "Single"))
+    # Merge the frequency labels back to the main data
+    dataHeat <- dataHeat %>%
+        left_join(countOrthoDf, by = "orthoIDNew")
+    # Check for "Multiple" freq in co-orthologs at geneID and supertaxonID level
+    freqDt <- dataHeat %>%
+        distinct(geneID, supertaxonID, orthoFreq) %>%
+        group_by(geneID, supertaxonID) %>%
+        mutate(
+            orthoFreq = ifelse("Multiple" %in% orthoFreq, "Multiple", orthoFreq)
+        ) %>% ungroup()
+    # Merge the updated frequency labels back to the main data
+    dataHeat <- dataHeat %>% left_join(
+        freqDt, by = c("geneID", "supertaxonID"), suffix = c("", "New"), 
+        relationship = "many-to-many"
+    )
+    # Step 3: Update orthoFreq with the new frequency labels and clean up
+    dataHeat <- dataHeat %>% mutate(orthoFreq = orthoFreqNew) %>%
+        select(-orthoFreqNew)
     return(dataHeat)
 }
-
 
 #' Create data for main profile plot
 #' @export
@@ -85,7 +90,6 @@ processOrthoID <- function(dataHeat = NULL) {
 dataMainPlot <- function(dataHeat = NULL){
     if (is.null(dataHeat)) stop("Input data cannot be NULL!")
     paralogNew <- orthoID <- NULL
-
     # reduce number of inparalogs based on filtered dataHeat
     dataHeatTb <- data.table(stats::na.omit(dataHeat))
     dataHeatTb[, paralogNew := .N, by = c("geneID", "supertaxon")]
@@ -93,9 +97,7 @@ dataMainPlot <- function(dataHeat = NULL){
         "geneID", "supertaxon", "paralogNew"
     )])
 
-    dataHeat <- merge(
-        dataHeat, dataHeatTb, by = c("geneID", "supertaxon"), all.x = TRUE
-    )
+    dataHeat <- dataHeat %>% left_join(dataHeatTb, by=c("geneID","supertaxon"))
     dataHeat$paralog <- dataHeat$paralogNew
     dataHeat <- dataHeat[!duplicated(dataHeat), ]
 

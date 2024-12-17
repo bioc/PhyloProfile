@@ -168,7 +168,7 @@ distanceMatrix <- getDistanceMatrix(profiles, method)
 
 #' Create clustered profile tree
 clusterMethod <- "complete"
-dd <- clusterDataDend(distanceMatrix, clusterMethod)
+dd <- clusterDataDend(as.dist(distanceMatrix), clusterMethod)
 getDendrogram(dd)
 ```
 

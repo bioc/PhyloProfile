@@ -10,7 +10,7 @@ test_that("test distritbution analyze functions", {
     percentDistributionData <- createPercentageDistributionData(
         inputData, rankName
     )
-    expect_true(nrow(percentDistributionData) == 18)
+    expect_true(nrow(percentDistributionData) == 20)
 
     # distribution data for 2 additional variables
     distributionData <- createVariableDistributionData(

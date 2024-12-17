@@ -1,15 +1,15 @@
 #' Prepare data for dimension reduction
 #' @export
-#' @usage prepareDimRedData(longDf = NULL, taxonRank = NULL, type = "taxa", 
+#' @usage prepareDimRedData(longDf = NULL, taxonRank = NULL, type = "taxa",
 #'     taxDB = NULL, filterVar = "both", cutoff = 0, groupLabelsBy = "taxa")
 #' @param longDf input phyloprofile file in long format
 #' @param taxonRank taxonomy rank for labels (e.g. "phylum")
 #' @param type type of clustering, either "taxa" (default) or "genes"
 #' @param taxDB path to taxonomy database
-#' @param filterVar choose variable (either "var1", "var2" or "both") to filter 
+#' @param filterVar choose variable (either "var1", "var2" or "both") to filter
 #' the data. Default: "both"
 #' @param cutoff cutoff to filter data values. Default: 0
-#' @param groupLabelsBy group labels by the number of "taxa" (default) or 
+#' @param groupLabelsBy group labels by the number of "taxa" (default) or
 #' "genes"
 #' @return A dataframe in wide format
 #' @author Vinh Tran tran@bio.uni-frankfurt.de
@@ -21,7 +21,7 @@
 #' prepareDimRedData(longDf, "phylum")
 
 prepareDimRedData <- function(
-    longDf = NULL, taxonRank = NULL, type = "taxa", taxDB = NULL, 
+    longDf = NULL, taxonRank = NULL, type = "taxa", taxDB = NULL,
     filterVar = "both", cutoff = 0, groupLabelsBy = "taxa"
 ) {
     if (is.null(longDf)) stop("Input data cannot be NULL")
@@ -46,15 +46,15 @@ prepareDimRedData <- function(
             )
     }
     # calculate mean of var1 and var2 (if var2 available)
-    if (all(c("var1", "var2") %in% colnames(longDf))) 
-        longDfSub <- longDf %>% mutate(var1 = (var1 + var2) / 2) 
+    if (all(c("var1", "var2") %in% colnames(longDf)))
+        longDfSub <- longDf %>% mutate(var1 = (var1 + var2) / 2)
     longDfSub <- longDfSub %>% select(geneID, ncbiID, var1)
-    
+
     # get taxon names for input taxa based on a selected supertaxon rank
     taxMatrix <- getTaxonomyMatrix(taxDB)
     nameList <- getNameList(taxDB)
-    superTaxonDf <- taxMatrix %>% 
-        filter(abbrName %in% longDfSub$ncbiID) %>% 
+    superTaxonDf <- taxMatrix %>%
+        filter(abbrName %in% longDfSub$ncbiID) %>%
         select(abbrName, one_of(taxonRank))
     colnames(superTaxonDf) <- c("ncbiID", "superID")
     superTaxonDf <- dplyr::left_join(
@@ -64,11 +64,11 @@ prepareDimRedData <- function(
     # if co-orthologs present, get max value (e.g. FAS) as the representative
     if (type == "taxa") {
         wideDf <- data.table::dcast(
-            setDT(longDfSub), ncbiID ~ geneID, value.var = c("var1"), 
+            setDT(longDfSub), ncbiID ~ geneID, value.var = c("var1"),
             fun.aggregate = max, fill = -1
         )
         wideDf <- dplyr::left_join(
-            wideDf, superTaxonDf %>% select(ncbiID, Label = fullName), 
+            wideDf, superTaxonDf %>% select(ncbiID, Label = fullName),
             by = "ncbiID"
         )
         # add count (how many seed genes each taxon has, excluding co-orthologs)
@@ -81,7 +81,7 @@ prepareDimRedData <- function(
         )
     } else {
         wideDf <- data.table::dcast(
-            setDT(longDfSub), geneID ~ ncbiID, value.var = c("var1"), 
+            setDT(longDfSub), geneID ~ ncbiID, value.var = c("var1"),
             fun.aggregate = max, fill = -1
         )
         wideDf$Label <- wideDf$geneID
@@ -110,14 +110,14 @@ prepareDimRedData <- function(
 
 #' Perform dimension reduction 2D
 #' @export
-#' @usage dimReduction(data4dimRed = NULL, by = "taxa", type = "binary", 
+#' @usage dimReduction(data4dimRed = NULL, by = "taxa", type = "binary",
 #'     randomSeed = 123, reductionTechnique = "umap", dimension = "2d",
 #'     tsneIter = 1000)
 #' @param data4dimRed data for dimension reduction (from prepareDimRedData)
 #' @param by cluster data by "taxa" (default) or "genes"
 #' @param type type of data, either "binary" (default) or "non-binary"
 #' @param randomSeed random seed. Default: 123
-#' @param reductionTechnique dimensionality reduction technique, either "umap" 
+#' @param reductionTechnique dimensionality reduction technique, either "umap"
 #' (default) or "tsne"
 #' @param dimension either "2d" (default) or "3d"
 #' @param tsneIter number of iterations for t-SNE. Default: 1000
@@ -205,14 +205,14 @@ fallbackUmap <- function(umapDt, randomSeed, dim) {
     )$layout
 }
 
-#' Reduce the number of labels for DIM reduction plot based on the 
+#' Reduce the number of labels for DIM reduction plot based on the
 #' gene/taxon frequency
 #' @export
 #' @usage groupLabelDimRedData(data4dimRed = NULL, freqCutoff = c(0,200))
 #' @param data4dimRed data for dimension reduction (from prepareDimRedData)
-#' @param freqCutoff gene/taxon frequency cutoff range. Any labels that are 
+#' @param freqCutoff gene/taxon frequency cutoff range. Any labels that are
 #' outside of this range will be assigned as [Other]
-#' @return A dataframe similar to input data4dimRed, but with modified Label 
+#' @return A dataframe similar to input data4dimRed, but with modified Label
 #' column, where less frequent labels are grouped together as "Other"
 #' @author Vinh Tran tran@bio.uni-frankfurt.de
 #' @seealso \code{\link{prepareDimRedData}}
@@ -225,7 +225,7 @@ fallbackUmap <- function(umapDt, randomSeed, dim) {
 #' groupLabelDimRedData(data4dimRed, freqCutoff = c(3,5))
 
 groupLabelDimRedData <- function(data4dimRed = NULL, freqCutoff = c(0,200)) {
-    if (is.null(data4dimRed) || length(data4dimRed) == 0) 
+    if (is.null(data4dimRed) || length(data4dimRed) == 0)
         stop("Input data cannot be NULL or EMPTY!")
     data4dimRed$Label[
         data4dimRed$n < freqCutoff[1] | data4dimRed$n > freqCutoff[2]
@@ -235,12 +235,12 @@ groupLabelDimRedData <- function(data4dimRed = NULL, freqCutoff = c(0,200)) {
 
 #' Generate data for dimension reduction plot
 #' @export
-#' @usage createDimRedPlotData(dimRedCoord = NULL, data4dimRed = NULL, 
+#' @usage createDimRedPlotData(dimRedCoord = NULL, data4dimRed = NULL,
 #'     freqCutoff = c(0,200), excludeTaxa = "None", currentNCBIinfo = NULL)
-#' @param dimRedCoord data contains DIM reduction coordinates (from 
+#' @param dimRedCoord data contains DIM reduction coordinates (from
 #' dimReduction)
 #' @param data4dimRed data for dimension reduction (from prepareDimRedData())
-#' @param freqCutoff gene/taxon frequency cutoff range. Any labels that are 
+#' @param freqCutoff gene/taxon frequency cutoff range. Any labels that are
 #' outside of this range will be assigned as [Other]
 #' @param excludeTaxa hide taxa from plot. Default: "None"
 #' @param currentNCBIinfo table/dataframe of the pre-processed NCBI taxonomy
@@ -259,10 +259,10 @@ groupLabelDimRedData <- function(data4dimRed = NULL, freqCutoff = c(0,200)) {
 #' createDimRedPlotData(dimRedCoord, data4dimRed)
 
 createDimRedPlotData <- function(
-    dimRedCoord = NULL, data4dimRed = NULL, freqCutoff = c(0, 200), 
+    dimRedCoord = NULL, data4dimRed = NULL, freqCutoff = c(0, 200),
     excludeTaxa = "None", currentNCBIinfo = NULL
 ) {
-    if (is.null(dimRedCoord) || is.null(data4dimRed) || 
+    if (is.null(dimRedCoord) || is.null(data4dimRed) ||
         length(dimRedCoord) == 0 || length(data4dimRed) == 0) {
         stop("Input data cannot be NULL or EMPTY!")
     }
@@ -307,10 +307,10 @@ createDimRedPlotData <- function(
 
 #' Create dimension reduction plot
 #' @export
-#' @usage plotDimRed(plotDf = NULL, legendPos = "bottom", 
-#'     colorPalette = "Set2", transparent = 0, textSize = 12, font = "Arial", 
+#' @usage plotDimRed(plotDf = NULL, legendPos = "bottom",
+#'     colorPalette = "Set2", transparent = 0, textSize = 12, font = "Arial",
 #'     highlightTaxa = NULL, dotZoom = 0)
-#' @param plotDf data for dimension reduction 2D plot 
+#' @param plotDf data for dimension reduction 2D plot
 #' @param legendPos position of legend. Default: "right"
 #' @param colorPalette color palette. Default: "Set2"
 #' @param transparent transparent level (from 0 to 1). Default: 0
@@ -333,7 +333,7 @@ createDimRedPlotData <- function(
 #' plotDimRed(plotDf, font = "sans")
 
 plotDimRed <- function(
-    plotDf = NULL, legendPos = "bottom", colorPalette = "Set2", 
+    plotDf = NULL, legendPos = "bottom", colorPalette = "Set2",
     transparent = 0, textSize = 12, font = "Arial", highlightTaxa = NULL,
     dotZoom = 0
 ) {
@@ -378,7 +378,7 @@ plotDimRed <- function(
             legend.position = legendPos,
             legend.text = element_text(size = textSize),
             legend.title = element_text(size = textSize),
-            axis.text = element_text(size = textSize), 
+            axis.text = element_text(size = textSize),
             axis.title = element_text(size = textSize),
         )
     plot <- plot + scale_color_manual(values = colorScheme)
@@ -389,17 +389,17 @@ plotDimRed <- function(
 
 #' Create dimension reduction 3D plot
 #' @export
-#' @usage plotDimRed3D(plotDf = NULL, legendPos = "bottom", 
-#'     colorPalette = "Set2", transparent = 0,highlightTaxa = NULL, 
+#' @usage plotDimRed3D(plotDf = NULL, legendPos = "bottom",
+#'     colorPalette = "Set2", transparent = 0,highlightTaxa = NULL,
 #'     dotZoom = 0)
-#' @param plotDf data for dimension reduction 3D plot 
+#' @param plotDf data for dimension reduction 3D plot
 #' @param legendPos position of legend. Default: "right"
 #' @param colorPalette color palette. Default: "Set2"
 #' @param transparent transparent level (from 0 to 1). Default: 0
 #' @param highlightTaxa list of taxa to be highlighted
 #' @param dotZoom dot size zooming factor. Default: 0
 #' @return A plot as ggplot object
-#' @rawNamespace import(plotly, except = last_plot)
+#' @rawNamespace import(plotly, except = c(last_plot, select))
 #' @author Vinh Tran tran@bio.uni-frankfurt.de
 #' @seealso \code{\link{prepareDimRedData}}, \code{\link{dimReduction}},
 #' \code{\link{createDimRedPlotData}}
@@ -414,7 +414,7 @@ plotDimRed <- function(
 #' plotDimRed3D(plotDf)
 
 plotDimRed3D <- function(
-    plotDf = NULL, legendPos = "bottom", colorPalette = "Set2", 
+    plotDf = NULL, legendPos = "bottom", colorPalette = "Set2",
     transparent = 0, highlightTaxa = NULL, dotZoom = 0
 ) {
     if (is.null(plotDf)) stop("Input data cannot be NULL!")
@@ -443,30 +443,30 @@ plotDimRed3D <- function(
             )
         )
     }
-    
+
     if (dotZoom == 0) {
         plot <- plot %>% add_markers(
-            color = ~Label, colors = colorDf$color, size = ~Freq, 
+            color = ~Label, colors = colorDf$color, size = ~Freq,
             alpha = 1 - transparent, span = I(0)
         )
     } else {
         plot <- plot %>% add_markers(
-            color = ~Label, colors = colorDf$color, size = ~Freq, 
+            color = ~Label, colors = colorDf$color, size = ~Freq,
             sizes = c(minSize, maxSize), alpha = 1 - transparent, span = I(0)
         )
     }
     if (legendPos == "none") plot <- plot %>% hide_legend()
     return(plot)
-} 
+}
 
 
 #' Add colors for taxa in dimension reduction plot
-#' @usage addDimRedTaxaColors(plotDf = NULL, colorPalette = "Set2", 
+#' @usage addDimRedTaxaColors(plotDf = NULL, colorPalette = "Set2",
 #'     highlightTaxa = NULL)
-#' @param plotDf data for dimension reduction plot 
+#' @param plotDf data for dimension reduction plot
 #' @param colorPalette color palette. Default: "Set2"
 #' @param highlightTaxa list of taxa to be highlighted
-#' @return A dataframe for dimension reduction plot with an additional column 
+#' @return A dataframe for dimension reduction plot with an additional column
 #' for the assigned color to each taxon
 #' @author Vinh Tran tran@bio.uni-frankfurt.de
 #' @seealso \code{\link{prepareDimRedData}}, \code{\link{dimReduction}},

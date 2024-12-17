@@ -156,7 +156,7 @@ shinyUI(
 
         # MAIN NARVARPAGE TABS -------------------------------------------------
         navbarPage(
-            em(strong("PhyloProfile v1.22.0")),
+            em(strong("PhyloProfile v2.0.0")),
             id = "tabs",
             collapsible = TRUE,
             inverse = TRUE,

@@ -114,24 +114,23 @@ processNcbiTaxonomy <- function() {
 #' )
 #' currentNCBIinfo <- as.data.frame(data.table::fread(ncbiFilein))
 #' getTaxonomyInfo(inputTaxa, currentNCBIinfo)
+
 getTaxonomyInfo <- function(inputTaxa = NULL, currentNCBIinfo = NULL) {
     tmp <- list()
     outList <- list()
     k <- 1
     missingTaxa <- setdiff(inputTaxa, currentNCBIinfo$ncbiID)
     if (length(missingTaxa) > 0) {
-    	warning(
-    		cat(length(missingTaxa), 
-    		    "id(s) missed in currentNCBIinfo, check taxon database: ",
-    	             paste(missingTaxa, collapse = ", ")
-    	            )
-    	)
+        warning(
+            sprintf(
+                "%d id(s) missing in currentNCBIinfo: %s",
+                length(missingTaxa), paste(missingTaxa, collapse = ", ")
+            )
+        )
     }
     for (refID in inputTaxa) {
         # get info for this taxon
-        if (refID %in% missingTaxa) {
-	    next
-        }
+        if (refID %in% missingTaxa) next
         refEntry <- currentNCBIinfo[currentNCBIinfo$ncbiID == refID, ]
         lastID <- refEntry$parentID
         inputTaxaInfo <- refEntry

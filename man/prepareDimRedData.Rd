@@ -4,7 +4,7 @@
 \alias{prepareDimRedData}
 \title{Prepare data for dimension reduction}
 \usage{
-prepareDimRedData(longDf = NULL, taxonRank = NULL, type = "taxa", 
+prepareDimRedData(longDf = NULL, taxonRank = NULL, type = "taxa",
     taxDB = NULL, filterVar = "both", cutoff = 0, groupLabelsBy = "taxa")
 }
 \arguments{
@@ -16,12 +16,12 @@ prepareDimRedData(longDf = NULL, taxonRank = NULL, type = "taxa",
 
 \item{taxDB}{path to taxonomy database}
 
-\item{filterVar}{choose variable (either "var1", "var2" or "both") to filter 
+\item{filterVar}{choose variable (either "var1", "var2" or "both") to filter
 the data. Default: "both"}
 
 \item{cutoff}{cutoff to filter data values. Default: 0}
 
-\item{groupLabelsBy}{group labels by the number of "taxa" (default) or 
+\item{groupLabelsBy}{group labels by the number of "taxa" (default) or
 "genes"}
 }
 \value{

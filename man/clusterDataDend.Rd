@@ -7,7 +7,7 @@
 clusterDataDend(distanceMatrix = NULL, clusterMethod = "complete")
 }
 \arguments{
-\item{distanceMatrix}{calculated distance matrix (see ?getDistanceMatrix)}
+\item{distanceMatrix}{calculated distance matrix as dist object}
 
 \item{clusterMethod}{clustering method ("single", "complete",
 "average" for UPGMA, "mcquitty" for WPGMA, "median" for WPGMC,
@@ -29,7 +29,7 @@ profiles <- getDataClustering(
 distMethod <- "mutualInformation"
 distanceMatrix <- getDistanceMatrix(profiles, distMethod)
 clusterMethod <- "complete"
-clusterDataDend(distanceMatrix, clusterMethod)
+clusterDataDend(as.dist(distanceMatrix), clusterMethod)
 }
 \seealso{
 \code{\link{getDataClustering}},
