@@ -2461,6 +2461,12 @@ shinyUI(
                         "Domain plot",
                         style = "success",
                         disabled = TRUE
+                    ),
+                    shinyBS::bsButton(
+                        "highlightMain",
+                        "Highlight",
+                        style = "success",
+                        disabled = FALSE
                     )
                 ),
                 style = "opacity: 0.80"

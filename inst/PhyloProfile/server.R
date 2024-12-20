@@ -4056,6 +4056,29 @@ shinyServer(function(input, output, session) {
             paste(a, s, b, c, d, e, sep = "\n")
         }
     })
+    
+    # * update highlight gene/taxa by selected point ---------------------------
+    observe({
+        input$highlightMain
+        # GET INFO BASED ON CURRENT TAB
+        if (input$tabs == "Main profile") {
+            shinyjs::enable("highlightMain")
+            # info contains groupID,orthoID,supertaxon,mVar1,%spec,var2
+            info <- isolate(mainpointInfo())
+        } else if (input$tabs == "Customized profile") {
+            shinyjs::disable("highlightMain")
+            info <- NULL
+        }
+        req(info)
+        if (length(info) > 1) {
+            updateSelectizeInput(
+                session, "geneHighlight", selected = info[[1]][1]
+            )
+            updateSelectizeInput(
+                session, "taxonHighlight", selected = info[[4]][1]
+            )
+        }
+    })
 
     # ============================= DETAILED PLOT ==============================
     # * data for detailed plot -------------------------------------------------
