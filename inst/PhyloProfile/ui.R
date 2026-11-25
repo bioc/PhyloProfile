@@ -1665,6 +1665,30 @@ shinyUI(
                             verbatimTextOutput("importTaxonomyDataStatus")
                         )
                     )
+                ),
+                
+                # * Input parser  ----------------------------------------------
+                tabPanel(
+                    "Input parser", value = "input_parser",
+                    uiOutput("descInputParserUI"),
+                    column(
+                        3,
+                        radioButtons(
+                            inputId = "parserInputType",
+                            label = "Choose input format:",
+                            choices = list(
+                                "OrthoFinder orthogroups" = "orthofinder",
+                                "SonicParanoid ortholog groups" = "sonicparanoid",
+                                "OMA HOG(s)" = "omahog",
+                                "OMA group(s)" = "omagroup"
+                            ),
+                            selected = "orthofinder"
+                        )
+                    ),
+                    column(
+                        9,
+                        inputParserUI("inputParser")
+                    )
                 )
             ),
 

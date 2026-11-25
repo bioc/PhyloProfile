@@ -465,13 +465,13 @@ shinyServer(function(input, output, session) {
         filein <- input$mainInput
         if (is.null(filein) & input$demoData == "none") {
             msg <- paste0(
-                "PhyloProfile is ready to use! Please upload
-        <em>an input file</em>, <em>a folder of pre-processed data</em>, or
-        select <em>a demo data</em><br /> to begin!
-        To learn more about the <em>input data</em>, please visit
-        <span style=\"text-decoration: underline;\">
-        <a href=\"https://github.com/BIONF/PhyloProfile/wiki/Input-Data\">
-        <span style=\"color: #ff0000;\">our wiki</span></span></a>."
+                "PhyloProfile is ready to use! Please upload ",
+                "<em>an input file</em>, <em>a folder of pre-processed data</em>, ",
+                "or select <em>a demo data</em> to begin!<br>",
+                "<br>To learn more about the <em>input data</em>, please visit ",
+                "<a href=\"https://github.com/BIONF/PhyloProfile/wiki/Input-Data\" ",
+                "target=\"_blank\" style=\"text-decoration: underline; ",
+                "color: #ff0000;\">our wiki</a>."
             )
             output$inputMsgUI <- renderUI({
                 div(class = "alert alert-warning", HTML(msg))
@@ -538,8 +538,16 @@ shinyServer(function(input, output, session) {
             em("Input from config file")
         } else {
             list(
+                strong("Upload input:"),
+                br(),
+                div(
+                    class = "alert alert-info",
+                    style = "padding: 6px 8px; margin: 5px 0; font-size: 90%;",
+                    HTML("Other format (e.g. <em>OrthoFinder</em>)? Convert it via "),
+                    actionLink("goToInputParser", strong("Function > Input parser"))
+                ),
                 radioButtons(
-                    "mainInputType", "Upload input:",
+                    "mainInputType", NULL,
                     choices = c("file","folder"), selected = "file",
                     inline = TRUE
                 ),
@@ -6285,4 +6293,15 @@ shinyServer(function(input, output, session) {
         })
         shinyjs::disable("doImportTax")
     })
+    
+    # * PARSING DIFFERENT FORMAT TO PP INPUT FORMAT ============================
+    observeEvent(input$goToInputParser, {
+        updateNavbarPage(session, "tabs", selected = "input_parser")
+    })
+    
+    parsedInputData <- callModule(
+        inputParser, "inputParser",
+        inputType = reactive(input$parserInputType),
+        ncbiTaxDb = currentNCBIinfo()
+    )
 })
