@@ -50,7 +50,7 @@ archiPlotModal <- function(id, title = "Domain architecture") {
         size = "l",
         easyClose = TRUE,
         footer = modalButton("Close"),
-        createArchitecturePlotUI("archiPlot")
+        createArchitecturePlotUI(id)
     )
 }
 
@@ -512,6 +512,14 @@ colorSettingsModal <- function() {
         ),
         actionButton(
             "defaultColorPara", "Default", style = "padding:4px; font-size:100%"
+        ),
+        hr(),
+        
+        colourpicker::colourInput(
+            "divisionLineColor", "Color for division lines", value = "dodgerblue4"
+        ),
+        actionButton(
+            "defaultColordivisionLine", "Default", style = "padding:4px; font-size:100%"
         )
     )
 }

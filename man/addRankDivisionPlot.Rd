@@ -7,7 +7,8 @@
 addRankDivisionPlot(profilePlot = NULL, plotDf = NULL,
     taxDB = NULL, workingRank = NULL, superRank = NULL, xAxis = "taxa",
     font = "Arial", groupLabelSize = 14, groupLabelDist = 2,
-    groupLabelAngle = 90, refLine = TRUE)
+    groupLabelAngle = 90, refLine = TRUE, lineColor = "dodgerblue4",
+    plotSize = NULL, labelMode = "lca")
 }
 \arguments{
 \item{profilePlot}{initial (highlighted) profile plot}
@@ -31,6 +32,17 @@ addRankDivisionPlot(profilePlot = NULL, plotDf = NULL,
 \item{groupLabelAngle}{angle of rank labels}
 
 \item{refLine}{add vertical line to separate reference taxon}
+
+\item{lineColor}{color of the division lines. Default = "dodgerblue4"}
+
+\item{plotSize}{plot size in px along the division axis (width if xAxis =
+"taxa", height if "genes"). Used to merge overlapping labels into their
+common ancestor (marked with "*"). NULL = never merge}
+
+\item{labelMode}{how to handle overlapping labels: "lca" (merge them
+into their lowest common ancestor, marked with "*") or "first" (show
+only the first label of the overlapping ones, followed by ",...").
+Default = "lca"}
 }
 \value{
 A profile heatmap plot with highlighted gene and/or taxon of interest

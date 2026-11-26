@@ -5,7 +5,8 @@
 #' @param processedProfileData dataframe contains the full processed
 #' phylogenetic profiles (see ?fullProcessedProfile or ?parseInfoProfile)
 #' @param taxaCount dataframe counting present taxa in each supertaxon
-#' @param rankName working taxonomy rank (e.g. "species", "genus", "family")
+#' @param rankName working taxonomy rank (e.g. "strain", "species", "genus",
+#' "family", "order")
 #' @param refTaxon reference taxon name (e.g. "Homo sapiens", "Homo" or
 #' "Hominidae")
 #' @param var1CO cutoff for var1. Default: c(0, 1)
@@ -47,49 +48,89 @@ estimateGeneAge <- function(
     processedProfileData, taxaCount, rankName, refTaxon,
     var1CO = c(0, 1), var2CO = c(0, 1), percentCO = c(0, 1), taxDB = NULL
 ){
-    infoMsg <- paste(
-        "This function supports only Species, Genus, Family, Class, Phylum,",
-        "Kingdom and Superkingdom taxonomy ranks."
+    supportedRanks <- c(
+        "strain", "species", "genus", "family", "order", "class", "phylum",
+        "kingdom", "superkingdom"
     )
-    if (rankName == "strain" || rankName == "order") {
-        stop("Invalid taxonomy rank!\n", infoMsg)
-    }
-    rankList <- c(
-        "genus", "family", "class", "phylum", "kingdom", "norank_33154",
-        "superkingdom", "root"
-    )
-    # get selected (super)taxon ID
+    if (!(rankName %in% supportedRanks))
+        stop(
+            "Invalid taxonomy rank! Supported ranks: ",
+            paste(supportedRanks, collapse = ", ")
+        )
     taxList <- getNameList(taxDB)
-    superID <- taxList[
-        taxList$fullName == refTaxon & taxList$rank == rankName,]$ncbiID
+    getName <- function(id) taxList$fullName[taxList$ncbiID %in% id][1]
     # full non-duplicated taxonomy data
     Dt <- getTaxonomyMatrix(taxDB)
+    # ranks used to compare each taxon with the reference taxon, ordered from
+    # the lowest to the highest. Each position of a category string ("cath")
+    # corresponds to one element of c("abbrName", rankList), so the length of
+    # cath and every category are derived from rankList (never hardcoded)
+    rankList <- c(
+        "strain", "species", "genus", "family", "order", "class", "phylum",
+        "kingdom", "norank_33154", "superkingdom", "root"
+    )
+    rankList <- rankList[rankList %in% colnames(Dt)]
+    if (!(rankName %in% rankList))
+        stop("Rank ", rankName, " not found in the taxonomy matrix!")
+    catCols <- c("abbrName", rankList)
+    nCat <- length(catCols)
+    # category of taxa sharing the reference's taxon from rank r upwards,
+    # e.g. for 12 positions getCat("genus") = "000111111111"
+    getCat <- function(r) {
+        nZero <- match(r, catCols) - 1
+        paste0(strrep("0", nZero), strrep("1", nCat - nZero))
+    }
+    # two-digit prefix of the age labels (see geneAgePlotDf)
+    ageCode <- c(
+        species = "01", genus = "02", family = "03", order = "04",
+        class = "05", phylum = "06", kingdom = "07", norank_33154 = "08",
+        superkingdom = "10", root = "11"
+    )
+    
+    # get selected (super)taxon ID. Strains often have no "strain" rank in
+    # the NCBI taxonomy (e.g. "norank"), so fall back to the name only
+    superID <- taxList$ncbiID[
+        taxList$fullName == refTaxon & taxList$rank == rankName]
+    if (length(superID) == 0 || !any(Dt[, rankName] %in% superID))
+        superID <- taxList$ncbiID[taxList$fullName == refTaxon]
+    superID <- superID[superID %in% Dt[, rankName]]
+    if (length(superID) == 0)
+        stop("Reference taxon ", refTaxon, " not found at rank ", rankName)
+    # get (super)taxa IDs for one of representative taxa
+    firstLine <- Dt[Dt[, rankName] %in% superID, ][1, ]
+    supFirstLine <- firstLine[, catCols]
     # subset of taxonomy data, containing only ranks from rankList
-    subDt <- Dt[, c("abbrName", rankList)]
-    # get (super)taxa IDs for one of representative species
-    firstLine <- Dt[Dt[, rankName] == superID, ][1, ]
-    supFirstLine <- firstLine[, c("abbrName", rankList)]
+    subDt <- Dt[, catCols]
     # compare each taxon IDs with selected taxon & create a "category" DF
     subDtTmp <- subDt
-    if (supFirstLine$norank_33154 %in% c(554915, 33154)) {
-        subDtTmp$norank_33154[
-            subDtTmp$norank_33154 %in% c(554915, 33154) &
-                subDtTmp$superkingdom == 2759
-            ] <- supFirstLine$norank_33154
-    } else {
-        subDtTmp$norank_33154[
-            !(subDtTmp$norank_33154 %in% c(554915, 33154)) &
-                subDtTmp$superkingdom == 2759
-            ] <- supFirstLine$norank_33154
+    if ("norank_33154" %in% rankList && "superkingdom" %in% rankList) {
+        # merge Unikonta (33154, 554915) or Bikonta into one group
+        isUnikont <- subDtTmp$norank_33154 %in% c(554915, 33154)
+        isEuk <- subDtTmp$superkingdom == 2759
+        if (supFirstLine$norank_33154 %in% c(554915, 33154)) {
+            subDtTmp$norank_33154[isUnikont & isEuk] <-
+                supFirstLine$norank_33154
+        } else {
+            subDtTmp$norank_33154[!isUnikont & isEuk] <-
+                supFirstLine$norank_33154
+        }
     }
-    catList <- lapply(
-        seq(nrow(subDtTmp)), function (x) {
-            cath <- subDtTmp[x, ] %in% supFirstLine
-            cath <- paste0(cath, collapse = "")})
-    catDf <- data.frame(ncbiID = as.character(subDtTmp$abbrName),
-                        cath = do.call(rbind, catList), stringsAsFactors=FALSE)
-    catDf$cath <- gsub("TRUE", "1", catDf$cath)
-    catDf$cath <- gsub("FALSE", "0", catDf$cath)
+    # compare as character: abbrName is a factor, all other columns are IDs
+    refIDs <- vapply(supFirstLine, function(x) as.character(x), character(1))
+    catMatrix <- vapply(
+        subDtTmp, function(col) as.integer(as.character(col) %in% refIDs),
+        integer(nrow(subDtTmp))
+    )
+    if (is.null(dim(catMatrix))) catMatrix <- matrix(catMatrix, nrow = 1)
+    cath <- apply(catMatrix, 1, paste0, collapse = "")
+    # keep only the uninterrupted run of 1s at the highest ranks, so that every
+    # cath is one of getCat(<rank>) (e.g. "000101111" -> "000001111")
+    ones <- nchar(sub("^.*?(1*)$", "\\1", cath))
+    cath <- paste0(strrep("0", nCat - ones), strrep("1", ones))
+    catDf <- data.frame(
+        ncbiID = as.character(subDtTmp$abbrName), cath = cath,
+        stringsAsFactors = FALSE
+    )
     # get main input data
     mdData <- droplevels(processedProfileData)
     # filter by var1, var2 ..
@@ -100,161 +141,98 @@ estimateGeneAge <- function(
     finalPresSpecDt <- calcPresSpec(mdData, taxaCount)
     mdData <- mdData[
         , c("geneID", "supertaxon","ncbiID","orthoID","var1","var2")
-        ]
-    mdDataFull <- Reduce(
-        function(x, y) merge(x, y, by = c("geneID", "supertaxon"), all.x=TRUE),
-        list(mdData, finalPresSpecDt))
+    ]
+    mdDataFull <- merge(
+        mdData, finalPresSpecDt, by = c("geneID", "supertaxon"), all.x = TRUE
+    )
     # add "category" into mdData
     mdDtExt <- merge(mdDataFull, catDf, by = "ncbiID", all.x = TRUE)
     mdDtExt$var1[mdDtExt$var1 == "NA" | is.na(mdDtExt$var1)] <- 0
     mdDtExt$var2[mdDtExt$var2 == "NA" | is.na(mdDtExt$var2)] <- 0
     # remove cat for "NA" orthologs and also for orthologs that dont fit cutoffs
-    if (nrow(mdDtExt[mdDtExt$orthoID == "NA" | is.na(mdDtExt$orthoID), ]) > 0)
-        mdDtExt[mdDtExt$orthoID == "NA" | is.na(mdDtExt$orthoID),]$cath <- NA
+    mdDtExt$cath[mdDtExt$orthoID == "NA" | is.na(mdDtExt$orthoID)] <- NA
     mdDtExt <- mdDtExt[stats::complete.cases(mdDtExt), ]
     # filter by %specpres
     mdDtExt <- mdDtExt[
-        mdDtExt$presSpec >=percentCO[1] & mdDtExt$presSpec<= percentCO[2],
-        ]
-
+        mdDtExt$presSpec >= percentCO[1] & mdDtExt$presSpec <= percentCO[2],
+    ]
+    
     # get the furthest common taxon with selected taxon for each gene
-    geneAgeDf <- as.data.frame(tapply(mdDtExt$cath, mdDtExt$geneID, min))
-    data.table::setDT(geneAgeDf, keep.rownames = TRUE)[]
-    data.table::setnames(geneAgeDf, seq_len(2), c("geneID", "cath"))  #col names
-    row.names(geneAgeDf) <- NULL   # remove row names
-
-    ### move NA cat to working taxonomy rank
-    if (rankName == "genus")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "011111111"
-    else if (rankName == "family")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "001111111"
-    else if (rankName == "class")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "000111111"
-    else if (rankName == "phylum")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "000011111"
-    else if (rankName == "kingdom")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "000001111"
-    else if (rankName == "superkingdom")
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "000000011"
-    else
-        geneAgeDf$cath[is.na(geneAgeDf$cath)] <- "111111111"
-    ### merge ranks that are lower than ref rank to ref rank
-    index <- 0
-    if (rankName != "species")
-        index <- match(rankName, rankList)
-    maxCat <- paste0(
-        paste(rep(0,index), collapse = ""), paste(rep(1,9-index), collapse = "")
+    minCat <- tapply(mdDtExt$cath, mdDtExt$geneID, min)
+    geneAgeDf <- data.frame(
+        geneID = names(minCat), cath = as.vector(minCat),
+        stringsAsFactors = FALSE
     )
-    geneAgeDf$cath[geneAgeDf$cath > maxCat] <- maxCat
+    ### genes without any valid ortholog and ranks that are lower than the
+    ### ref rank are moved to the working (ref) rank
+    refCat <- getCat(rankName)
+    geneAgeDf$cath[is.na(geneAgeDf$cath) | geneAgeDf$cath > refCat] <- refCat
+    
     ### convert cat into geneAge
-    domainDfList <- lapply(
-        geneAgeDf[geneAgeDf$cath == "000000001",]$geneID,
-        function (x) {
-            orthoList <- mdDtExt[
-                mdDtExt$geneID == x & mdDtExt$cath == "000000001",]$ncbiID
-            orthoDomainID <- levels(as.factor(
-                subDt[subDt$abbrName %in% orthoList,]$superkingdom))
-            orthoDomainName <- levels(as.factor(c(
-                taxList$fullName[taxList$ncbiID == supFirstLine$superkingdom],
-                taxList$fullName[taxList$ncbiID %in% orthoDomainID]
-            )))
-            if (length(orthoDomainName) == 3) {
-                age <- paste0("10_", paste(orthoDomainName, collapse = "-"))
-            } else {
-                age <- paste0("09_", paste(orthoDomainName, collapse = "-"))
-            }
-            return(data.frame(geneID = x, age, stringsAsFactors = FALSE))
+    getOrthos <- function(gene, cat) {
+        mdDtExt$ncbiID[mdDtExt$geneID == gene & mdDtExt$cath == cat]
+    }
+    # root: shared by 2 or 3 superkingdoms
+    rootAge <- function(orthoList) {
+        orthoDomainID <- unique(
+            subDt$superkingdom[subDt$abbrName %in% orthoList]
+        )
+        orthoDomainName <- sort(unique(c(
+            getName(supFirstLine$superkingdom),
+            taxList$fullName[taxList$ncbiID %in% orthoDomainID]
+        )))
+        code <- if (length(orthoDomainName) >= 3) "12" else "11"
+        paste0(code, "_", paste(orthoDomainName, collapse = "-"))
+    }
+    # norank_33154: Opisthokonta/Amoebozoa..., Unikonta/Bikonta or Eukaryote
+    konAge <- function(orthoList) {
+        if (supFirstLine$superkingdom != 2759)
+            return(paste0("10_", getName(supFirstLine$superkingdom)))
+        orthoKonID <- unique(c(
+            as.character(subDt$norank_33154[subDt$abbrName %in% orthoList]),
+            as.character(supFirstLine$norank_33154)
+        ))
+        if (length(orthoKonID) == 1)
+            return(paste0("08_", getName(orthoKonID)))
+        ukon <- unique(orthoKonID %in% c(33154, 554915))
+        if (length(ukon) == 1)
+            return(ifelse(ukon, "09_Unikonta", "09_Bikonta"))
+        return("10_Eukaryote")
+    }
+    # kingdom: for Sar, check for a common subgroup of Sar
+    kingdomAge <- function(orthoList) {
+        kingdomName <- getName(supFirstLine$kingdom)
+        sarCols <- intersect(
+            colnames(Dt), c("norank_33630", "norank_543769", "norank_33634"))
+        if (!identical(kingdomName, "Sar") || length(sarCols) == 0)
+            return(paste0("07_", kingdomName))
+        sarTaxDt <- Dt[Dt$abbrName %in% orthoList, sarCols, drop = FALSE]
+        common <- unlist(lapply(
+            sarTaxDt, function(x) if (length(unique(x)) == 1) unique(x)))
+        if (is.null(common)) return(paste0("07_", kingdomName))
+        return(paste0("07_", getName(common)))
+    }
+    
+    geneAgeDf$age <- NA_character_
+    refCode <- if (rankName == "strain") "00" else ageCode[[rankName]]
+    geneAgeDf$age[geneAgeDf$cath == refCat] <- paste0(refCode, "_", refTaxon)
+    higherRanks <- rankList[-seq_len(match(rankName, rankList))]
+    for (r in higherRanks) {
+        rCat <- getCat(r)
+        idx <- which(geneAgeDf$cath == rCat)
+        if (length(idx) == 0) next
+        if (r %in% c("root", "norank_33154", "kingdom")) {
+            ageFn <- switch(
+                r, root = rootAge, norank_33154 = konAge, kingdom = kingdomAge)
+            geneAgeDf$age[idx] <- vapply(
+                geneAgeDf$geneID[idx],
+                function(g) ageFn(getOrthos(g, rCat)), character(1)
+            )
+        } else {
+            geneAgeDf$age[idx] <- paste0(
+                ageCode[[r]], "_", getName(supFirstLine[[r]]))
         }
-    )
-    konList <- lapply(
-        geneAgeDf[geneAgeDf$cath == "000000111",]$geneID,
-        function (x) {
-            orthoList <- mdDtExt[
-                mdDtExt$geneID == x & mdDtExt$cath == "000000111",]$ncbiID
-            orthoKonID <- levels(as.factor(
-                subDt[subDt$abbrName %in% orthoList,]$norank_33154))
-            superKingdom <- taxList$ncbiID[
-                taxList$ncbiID == supFirstLine$superkingdom
-                & taxList$rank == "superkingdom"]
-            if (superKingdom == 2759) {
-                orthoKonID <- unique(c(orthoKonID, supFirstLine$norank_33154))
-                if (length(orthoKonID) == 1) {
-                    age <- paste0(
-                        "06_", taxList$fullName[taxList$ncbiID == orthoKonID])
-                } else {
-                    ukon <- levels(as.factor(orthoKonID%in%c(33154, 554915)))
-                    if (length(ukon) == 1) {
-                        if (ukon == TRUE) {
-                            age <- "07_Unikonta"
-                        } else {
-                            age <- "07_Bikonta"
-                        }
-                    } else {
-                        age <- "08_Eukaryote"
-                    }
-                }
-            } else {
-                age <- paste0(
-                    "08_", taxList$fullName[
-                        taxList$ncbiID == supFirstLine$superkingdom])
-            }
-            return(data.frame(geneID = x, age, stringsAsFactors = FALSE))
-        }
-    )
-    sarList <- lapply(
-        geneAgeDf[geneAgeDf$cath == "000001111",]$geneID,
-        function (x) {
-            if (
-                taxList$fullName[taxList$ncbiID == supFirstLine$kingdom] =="Sar"
-            ) {
-                orthoList <- mdDtExt[
-                    mdDtExt$geneID == x & mdDtExt$cath == "000001111",]$ncbiID
-                sarTaxDt <- Dt[
-                    Dt$abbrName %in% orthoList,
-                    colnames(Dt)[
-                        colnames(Dt) %in%
-                            c("norank_33630", "norank_543769", "norank_33634")]]
-                check <- lapply(
-                    sarTaxDt,
-                    function(x) {
-                        if (length(unique(x)) == 1) return(unique(x))
-                        else return(NULL)
-                    }
-                )
-                if (is.null(unlist(check))) {
-                    age <- paste0(
-                        "05_",
-                        taxList$fullName[taxList$ncbiID == supFirstLine$kingdom]
-                    )
-                } else {
-                    age <- paste0(
-                        "05_",
-                        taxList$fullName[taxList$ncbiID == unlist(check)])
-                }
-            } else {
-                age <- paste0(
-                    "05_",
-                    taxList$fullName[taxList$ncbiID == supFirstLine$kingdom])
-            }
-            return(data.frame(geneID = x, age, stringsAsFactors = FALSE))
-        }
-    )
-    geneAgeDfPre <- do.call(rbind, c(domainDfList, konList, sarList))
-    if (!(is.null(geneAgeDfPre)))
-        geneAgeDf <- merge(geneAgeDf, geneAgeDfPre, by = "geneID", all.x = TRUE)
-    geneAgeDf$age[geneAgeDf$cath == "000000011"] <- paste0(
-        "08_", taxList$fullName[taxList$ncbiID == supFirstLine$superkingdom])
-    geneAgeDf$age[geneAgeDf$cath == "000011111"] <- paste0(
-        "04_", taxList$fullName[taxList$ncbiID == supFirstLine$phylum])
-    geneAgeDf$age[geneAgeDf$cath == "000111111"] <- paste0(
-        "03_", taxList$fullName[taxList$ncbiID == supFirstLine$class])
-    geneAgeDf$age[geneAgeDf$cath == "001111111"] <- paste0(
-        "02_", taxList$fullName[taxList$ncbiID == supFirstLine$family])
-    geneAgeDf$age[geneAgeDf$cath == "011111111"] <- paste0(
-        "01_", taxList$fullName[taxList$ncbiID == supFirstLine$genus])
-    geneAgeDf$age[geneAgeDf$cath == "111111111"] <- paste0(
-        "00_", taxList$fullName[
-            taxList$fullName == refTaxon & taxList$rank == rankName])
+    }
     # return geneAge data frame
     geneAgeDf <- geneAgeDf[, c("geneID", "cath", "age")]
     return(geneAgeDf)
@@ -273,7 +251,7 @@ estimateGeneAge <- function(
 #' geneAgeDf <- data.frame(
 #' geneID = c("100136at6656", "100265at6656", "101621at6656", "103479at6656"),
 #' cath = c("0000001", "0000011", "0000001", "0000011"),
-#' age = c("07_LUCA", "06_Eukaryota", "07_LUCA", "06_Eukaryota")
+#' age = c("12_LUCA", "10_Eukaryota", "12_LUCA", "10_Eukaryota")
 #' )
 #' geneAgePlotDf(geneAgeDf)
 
@@ -283,10 +261,10 @@ geneAgePlotDf <- function(geneAgeDf){
     plotDf <- geneAgeDf %>% dplyr::count(age)
     plotDf$level <- substring(plotDf$age, 1,2)
     levelDf <- data.frame(
-        level = c("00", "01", "02", "03", "04", "05", "08", "10"),
+        level = c("00", "01", "02", "03", "04", "05", "06", "07", "10", "12"),
         rank = c(
-            " (Species)", " (Genus)", " (Family)", " (Class)", " (Phylum)",
-            " (Kingdom)", " (Superkingdom)"," (LUCA)"
+            " (Strain)", " (Species)", " (Genus)", " (Family)", " (Order)",
+            " (Class)", " (Phylum)", " (Kingdom)", " (Superkingdom)", " (LUCA)"
         ),
         stringsAsFactors = FALSE
     )

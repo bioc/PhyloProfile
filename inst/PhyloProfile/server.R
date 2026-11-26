@@ -368,7 +368,8 @@ shinyServer(function(input, output, session) {
         midColorVar2  = "#FFFFFF",
         highColorVar2 = "#616587",
         midVar2       = 1,
-        paraColor     = "#07d000"
+        paraColor     = "#07d000",
+        divisionLineColor = "dodgerblue4"
     )
     getInputOrDefaultColor <- function(input, id) {
         val <- input[[id]]
@@ -386,6 +387,7 @@ shinyServer(function(input, output, session) {
       colourpicker::updateColourInput(session, "highColorVar2", value = getInputOrDefaultColor(input, "highColorVar2"))
       updateNumericInput(session, "midVar2", value = getInputOrDefaultColor(input, "midVar2"))
       colourpicker::updateColourInput(session, "paraColor", value = getInputOrDefaultColor(input, "paraColor"))
+      colourpicker::updateColourInput(session, "divisionLineColor", value = getInputOrDefaultColor(input, "divisionLineColor"))
     })
 
     # Default profile plot settings
@@ -403,14 +405,15 @@ shinyServer(function(input, output, session) {
     )
 
     # ---------------- Helpers ----------------
-    #idWithSuffix <- function(base, suffix) {
-    #  if (suffix == "") base else paste0(base, suffix)
-    #}
-
     getInputOrDefault <- function(input, id, defaults, suffix = "") {
       fullId <- idWithSuffix(id, suffix)
       val <- input[[fullId]]
       if (is.null(val)) defaults[[id]] else val
+    }
+    
+    getLegendInput <- function(input, id) {
+        val <- input[[id]]
+        if (is.null(val) || val == "") defaultPlotConfig$legend else val
     }
 
     # ---------------- Main Plot Modal ----------------
@@ -428,7 +431,7 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session, "xSize", value = getInputOrDefault(input, "xSize", defaultPlotConfig))
       updateNumericInput(session, "ySize", value = getInputOrDefault(input, "ySize", defaultPlotConfig))
       updateNumericInput(session, "legendSize", value = getInputOrDefault(input, "legendSize", defaultPlotConfig))
-      updateSelectInput(session, "mainLegend", selected = getInputOrDefault(input, "legend", defaultPlotConfig))
+      updateSelectInput(session, "mainLegend", selected = getLegendInput(input, "mainLegend"))
       updateNumericInput(session, "groupLabelSize", value = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig))
       updateNumericInput(session, "groupLabelDist", value = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig))
       updateSliderInput(session, "groupLabelAngle", value = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig))
@@ -450,7 +453,7 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session, "xSizeSelect", value = getInputOrDefault(input, "xSize", defaultPlotConfig, "Select"))
       updateNumericInput(session, "ySizeSelect", value = getInputOrDefault(input, "ySize", defaultPlotConfig, "Select"))
       updateNumericInput(session, "legendSizeSelect", value = getInputOrDefault(input, "legendSize", defaultPlotConfig, "Select"))
-      updateSelectInput(session, "selectedLegend", selected = getInputOrDefault(input, "legend", defaultPlotConfig, "Select"))
+      updateSelectInput(session, "selectedLegend", selected = getLegendInput(input, "selectedLegend"))
       updateNumericInput(session, "groupLabelSizeSelect", value = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig, "Select"))
       updateNumericInput(session, "groupLabelDistSelect", value = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig, "Select"))
       updateSliderInput(session, "groupLabelAngleSelect", value = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig, "Select"))
@@ -758,7 +761,7 @@ shinyServer(function(input, output, session) {
     output$colorVar.ui <- renderUI({
         choices <- setNames( c("var1","var2"), c(input$var1ID, input$var2ID))
         if (input$plotMode == "fast")
-            radioButtons( #selectInput(
+            radioButtons(
                 "colorVar", "Color dots by:", choices = choices,
                 selected = "var1", inline = TRUE
             )
@@ -1112,6 +1115,10 @@ shinyServer(function(input, output, session) {
 
     observeEvent(input$defaultColorPara, {
         shinyjs::reset("paraColor")
+    })
+    
+    observeEvent(input$defaultColordivisionLine, {
+        shinyjs::reset("divisionLineColor")
     })
 
     # * render list of taxonomy ranks ------------------------------------------
@@ -1703,11 +1710,31 @@ shinyServer(function(input, output, session) {
                     }
 
                     newTaxaFile <- paste0(taxDB, "/newTaxa.txt")
-                    newTaxaDf <- fread(file = newTaxaFile, select = 1)
+                    newTaxaDf <- fread(
+                        file = newTaxaFile, select = c("ncbiID", "parentID")
+                    )
                     newTaxa <- as.numeric(newTaxaDf$ncbiID)
 
                     if (nrow(unkTaxa[unkTaxa$id %in% newTaxa,]) > 0) {
                         unkTaxa[unkTaxa$id %in% newTaxa,]$Source <- "new"
+                    }
+
+                    # check new taxa whose parent ID is not in the taxonomy DB.
+                    # A parent that is itself a new taxon counts as valid only
+                    # if its own lineage reaches the DB
+                    validIDs <- as.numeric(ncbiID[ncbiID != "ncbiID"])
+                    parentIDs <- as.numeric(newTaxaDf$parentID)
+                    resolved <- rep(FALSE, length(newTaxa))
+                    repeat {
+                        newlyResolved <- !resolved &
+                            parentIDs %in% c(validIDs, newTaxa[resolved])
+                        if (!any(newlyResolved)) break
+                        resolved <- resolved | newlyResolved
+                    }
+                    invalidParentTaxa <- newTaxa[!resolved]
+                    if (any(unkTaxa$id %in% invalidParentTaxa)) {
+                        unkTaxa$Source[unkTaxa$id %in% invalidParentTaxa] <-
+                            "invalid parent ID"
                     }
 
                     # check invalid tax IDs in newTaxa.txt file
@@ -1730,10 +1757,21 @@ shinyServer(function(input, output, session) {
                         ]$Source <- "invalid"
                     }
                     # filter out invalid taxa if needed
-                    if ("invalid taxa" %in% input$ignoreTaxa) 
-                        unkTaxa <- unkTaxa %>% filter(Source != "invalid")
-                    if ("unknown taxa" %in% input$ignoreTaxa)
-                        unkTaxa <- unkTaxa %>% filter(Source != "unknown")
+                    if ("all new taxa" %in% input$ignoreTaxa) {
+                        # ignore every taxon that is missing from the
+                        # taxonomy DB, regardless of its source
+                        unkTaxa <- unkTaxa[0, ]
+                    } else {
+                        if ("invalid taxa" %in% input$ignoreTaxa) {
+                            unkTaxa <- unkTaxa %>% filter(
+                                !Source %in% c("invalid", "invalid parent ID")
+                            )
+                        }
+                        
+                        if ("unknown taxa" %in% input$ignoreTaxa) {
+                            unkTaxa <- unkTaxa %>% filter(Source != "unknown")
+                        }
+                    }
 
                     # return list of unkTaxa
                     if (nrow(unkTaxa) == 0) return()
@@ -1748,6 +1786,8 @@ shinyServer(function(input, output, session) {
         unkTaxa <- unkTaxa()
         if (length(unkTaxa) > 0) {
             if ("invalid" %in% unkTaxa$Source) return("invalid")
+            if ("invalid parent ID" %in% unkTaxa$Source)
+                return("invalidParent")
             if ("unknown" %in% unkTaxa$Source) return("unknown")
             else return("ncbi")
         } else return(0)
@@ -1756,9 +1796,19 @@ shinyServer(function(input, output, session) {
 
     # * render list of unkTaxa -------------------------------------------------
     output$unkTaxaFull <-
-        DT::renderDataTable(options = list(searching = FALSE, pageLength = 10),{
+        DT::renderDataTable(options = list(searching = FALSE, pageLength = 10), {
             if (length(unkTaxa()) > 0) {
-                tb <- unkTaxa()
+                tb <- unkTaxa() %>%
+                    mutate(Source = factor(
+                        Source,
+                        levels = c(
+                            "unknown", "invalid", "invalid parent ID", "new",
+                            "ncbi"
+                        )
+                    )) %>%
+                    arrange(Source, TaxonID) %>%
+                    mutate(Source = as.character(Source))
+                
                 tb[, c("TaxonID", "Source")]
             }
         })
@@ -3081,14 +3131,28 @@ shinyServer(function(input, output, session) {
     # * render list of superRanks for adding vertical lines --------------------
     output$superRankSelect.ui <- renderUI({
         allRanks <- getTaxonomyRanks()
-        selectInput(
-            "superRankSelect", label = "Display taxonomic labels for:",
-            choices = c(allRanks[!(allRanks %in% c("strain"))]),
-            selected = ""
+        tagList(
+            selectInput(
+                "superRankSelect", label = "Display taxonomic labels for:",
+                choices = c(allRanks[!(allRanks %in% c("strain"))]),
+                selected = ""
+            ),
+            conditionalPanel(
+                condition = "input.superRankSelect != ''",
+                radioButtons(
+                    "labelMode", label = "Overlapping labels:",
+                    choices = c("Show first label (,...)" = "first",
+                                "Merge into common ancestor (*)" = "lca"),
+                    selected = "first"
+                )
+            )
         )
     })
 
     # * update plot size based on input ----------------------------------------
+    # normal mode: size estimated by adaptPlotSize() (capped at 20000 px)
+    # fast mode:   same estimate, but only shrinks; never exceeds 900 px
+    #              (falls back to 900 x 900 when no estimate is possible)
     observe({
         req(getMainInput())
         longDataframe <- getMainInput()
@@ -3099,47 +3163,45 @@ shinyServer(function(input, output, session) {
         req(longDataframe)
         req(input$endIndex)
         req(input$plotMode)
-        if (input$autoSizing & input$plotMode == "normal") {
+        fastMode <- input$plotMode == "fast"
+        maxSize <- if (fastMode) 900 else 20000
+        
+        adaptedSize <- c()
+        if (isTRUE(input$autoSizing)) {
             inputSuperTaxon <- inputTaxonName()
             nrTaxa <- nlevels(as.factor(inputSuperTaxon$fullName))
             nrGene <- input$endIndex
-
             adaptedSize <- adaptPlotSize(
-                nrTaxa, nrGene, input$xAxis, getInputOrDefault(input, "dotZoom", defaultPlotConfig)
+                nrTaxa, nrGene, input$xAxis,
+                getInputOrDefault(input, "dotZoom", defaultPlotConfig)
             )
-            req(length(adaptedSize) > 0)
+        }
+        
+        if (length(adaptedSize) > 0) {
             h <- adaptedSize[1]
             hv <- adaptedSize[2]
             wv <- adaptedSize[3]
             if (h <= 20) {
-                if (!is.null(input$superRankSelect) && input$superRankSelect == "") {
-                    updateSelectInput(
-                        session, "mainLegend", label = "Legend position:",
-                        choices = list("Right" = "right",
-                                       "Left" = "left",
-                                       "Top" = "top",
-                                       "Bottom" = "bottom",
-                                       "Hide" = "none"),
-                        selected = "top"
-                    )
-                } else {
-                    updateSelectInput(
-                        session, "mainLegend", label = "Legend position:",
-                        choices = list("Right" = "right",
-                                       "Left" = "left",
-                                       "Top" = "top",
-                                       "Bottom" = "bottom",
-                                       "Hide" = "none"),
-                        selected = "right"
-                    )
-                }
-                updateNumericInput(session, "width", value = min(20000, wv  + 50))
-            } else if (h <= 30) {
-                updateNumericInput(session, "width", value = min(20000, wv + 50))
-            } else {
-                updateNumericInput(session, "width", value = min(20000, wv))
+                legendPos <- "right"
+                if (!is.null(input$superRankSelect) &&
+                    input$superRankSelect == "") legendPos <- "top"
+                updateSelectInput(
+                    session, "mainLegend", label = "Legend position:",
+                    choices = list("Right" = "right",
+                                   "Left" = "left",
+                                   "Top" = "top",
+                                   "Bottom" = "bottom",
+                                   "Hide" = "none"),
+                    selected = legendPos
+                )
             }
-            updateNumericInput(session, "height", value = min(20000, hv))
+            if (h <= 30) wv <- wv + 50
+            updateNumericInput(session, "width", value = min(maxSize, wv))
+            updateNumericInput(session, "height", value = min(maxSize, hv))
+        } else if (fastMode) {
+            # auto sizing off, or data too large for adaptPlotSize()
+            updateNumericInput(session, "width", value = maxSize)
+            updateNumericInput(session, "height", value = maxSize)
         }
         if (rtCheck) {
             checkpoint152 <- Sys.time()
@@ -3149,15 +3211,13 @@ shinyServer(function(input, output, session) {
             ))
         }
     })
-
+    
+    # fast mode: reset size of the selected (brushed) plot
+    # (width/height of the main plot are now handled by the observer above)
     observe({
-        if(!(is.null(input$plotMode))) {
-            if (input$plotMode == "fast") {
-                updateNumericInput(session, "height", value = 900)
-                updateNumericInput(session, "width", value = 900)
-                updateNumericInput(session, "selectedHeight", value = 900)
-                updateNumericInput(session, "selectedWidth", value = 900)
-            }
+        if (!is.null(input$plotMode) && input$plotMode == "fast") {
+            updateNumericInput(session, "selectedHeight", value = 900)
+            updateNumericInput(session, "selectedWidth", value = 900)
         }
     })
 
@@ -3168,6 +3228,7 @@ shinyServer(function(input, output, session) {
         shinyjs::reset("legendSize")
         shinyjs::reset("xAngle")
         shinyjs::reset("dotZoom")
+        shinyjs::reset("mainLegend")
     })
 
     # * close configuration windows of Main plot -------------------------------
@@ -3178,6 +3239,7 @@ shinyServer(function(input, output, session) {
     # * parameters for the main profile plot -----------------------------------
     getParameterInputMain <- reactive({
         input$updateBtn
+        input$do
         if (rtCheck) {
             checkpoint161 <- Sys.time()
             print(paste(
@@ -3218,10 +3280,11 @@ shinyServer(function(input, output, session) {
                 midColorVar2 = getInputOrDefaultColor(input, "midColorVar2"),
                 highColorVar2 = getInputOrDefaultColor(input, "highColorVar2"),
                 paraColor = getInputOrDefaultColor(input, "paraColor"),
+                divisionLineColor = getInputOrDefaultColor(input, "divisionLineColor"),
                 xSize = getInputOrDefault(input, "xSize", defaultPlotConfig),
                 ySize = getInputOrDefault(input, "ySize", defaultPlotConfig),
                 legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig),
-                mainLegend = getInputOrDefault(input, "legend", defaultPlotConfig),
+                mainLegend = getLegendInput(input, "mainLegend"),
                 dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig),
                 xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig),
                 groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig),
@@ -3252,10 +3315,11 @@ shinyServer(function(input, output, session) {
                     midColorVar2 = getInputOrDefaultColor(input, "midColorVar2"),
                     highColorVar2 = getInputOrDefaultColor(input, "highColorVar2"),
                     paraColor = getInputOrDefaultColor(input, "paraColor"),
+                    divisionLineColor = getInputOrDefaultColor(input, "divisionLineColor"),
                     xSize = getInputOrDefault(input, "xSize", defaultPlotConfig),
                     ySize = getInputOrDefault(input, "ySize", defaultPlotConfig),
                     legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig),
-                    mainLegend = getInputOrDefault(input, "legend", defaultPlotConfig),
+                    mainLegend = getLegendInput(input, "mainLegend"),
                     dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig),
                     xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig),
                     groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig),
@@ -3304,6 +3368,7 @@ shinyServer(function(input, output, session) {
         typeProfile = reactive("mainProfile"),
         taxDB = getTaxDBpath,
         superRank = reactive(input$superRankSelect),
+        labelMode = reactive(input$labelMode),
         allTaxa = allInputTaxa,
         mode = reactive(input$plotMode)
     )
@@ -3522,10 +3587,21 @@ shinyServer(function(input, output, session) {
     # * render list of superRanks for adding vertical lines --------------------
     output$cusSuperRankSelect.ui <- renderUI({
         allRanks <- getTaxonomyRanks()
-        selectInput(
-            "cusSuperRankSelect", label = "Display taxonomic labels for:",
-            choices = c(allRanks[!(allRanks %in% c("strain"))]),
-            selected = ""
+        tagList(
+            selectInput(
+                "cusSuperRankSelect", label = "Display taxonomic labels for:",
+                choices = c(allRanks[!(allRanks %in% c("strain"))]),
+                selected = ""
+            ),
+            conditionalPanel(
+                condition = "input.cusSuperRankSelect != ''",
+                radioButtons(
+                    "cusLabelMode", label = "Overlapping labels:",
+                    choices = c("Show first label (,...)" = "first",
+                                "Merge into common ancestor (*)" = "lca"),
+                    selected = "first"
+                )
+            )
         )
     })
 
@@ -3615,6 +3691,7 @@ shinyServer(function(input, output, session) {
         shinyjs::reset("legendSizeSelect")
         shinyjs::reset("xAngleSelect")
         shinyjs::reset("dotZoomSelect")
+        shinyjs::reset("selectedLegend")
     })
 
     # ** close configuration windows of Customized plot ------------------------
@@ -3661,10 +3738,11 @@ shinyServer(function(input, output, session) {
                 midColorVar2 = getInputOrDefaultColor(input, "midColorVar2"),
                 highColorVar2 = getInputOrDefaultColor(input, "highColorVar2"),
                 paraColor = getInputOrDefaultColor(input, "paraColor"),
+                divisionLineColor = getInputOrDefaultColor(input, "divisionLineColor"),
                 xSize = getInputOrDefault(input, "xSize", defaultPlotConfig, suffix = "Select"),
                 ySize = getInputOrDefault(input, "ySize", defaultPlotConfig, suffix = "Select"),
                 legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig, suffix = "Select"),
-                mainLegend = getInputOrDefault(input, "legend", defaultPlotConfig, suffix = "Select"),
+                mainLegend = getLegendInput(input, "selectedLegend"),
                 dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig, suffix = "Select"),
                 xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig, suffix = "Select"),
                 groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig, suffix = "Select"),
@@ -3691,6 +3769,7 @@ shinyServer(function(input, output, session) {
         typeProfile = reactive("customizedProfile"),
         taxDB = getTaxDBpath,
         superRank = reactive(input$cusSuperRankSelect),
+        labelMode = reactive(input$cusLabelMode),
         allTaxa = allInputTaxa,
         mode = reactive(input$plotMode)
     )
@@ -4892,16 +4971,15 @@ shinyServer(function(input, output, session) {
 
     # * render domain plot -----------------------------------------------------
     renderArchiModal <- function(triggerId, moduleId) {
+        callModule(
+            createArchitecturePlot, moduleId,
+            pointInfo = getDomainFile,
+            domainInfo = getDomainInformation,
+            currentNCBIinfo = currentNCBIinfo,
+            font = reactive(input$font)
+        )
         observeEvent(input[[triggerId]], {
             showModal(archiPlotModal(moduleId))
-
-            callModule(
-                createArchitecturePlot, moduleId,
-                pointInfo = getDomainFile,
-                domainInfo = getDomainInformation,
-                currentNCBIinfo = currentNCBIinfo,
-                font = reactive(input$font)
-            )
         })
     }
     renderArchiModal("doDomainPlot", "archiPlot")

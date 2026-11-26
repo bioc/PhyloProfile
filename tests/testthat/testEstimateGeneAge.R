@@ -19,7 +19,7 @@ test_that("test estimation of gene ages", {
         var1Cutoff, var2Cutoff, percentCutoff
     )
     expect_true(
-        geneAge$age[geneAge$geneID == "103479at6656"] == "08_Eukaryota"
+        geneAge$age[geneAge$geneID == "103479at6656"] == "10_Eukaryota"
     )
 })
 

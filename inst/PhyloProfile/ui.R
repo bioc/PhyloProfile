@@ -161,7 +161,7 @@ shinyUI(
 
         # MAIN NARVARPAGE TABS -------------------------------------------------
         navbarPage(
-            em(strong("PhyloProfile v2.6.0")),
+            em(strong("PhyloProfile v2.8.0")),
             id = "tabs",
             collapsible = TRUE,
             inverse = TRUE,
@@ -317,8 +317,19 @@ shinyUI(
                     conditionalPanel(
                         condition = "output.unkTaxaStatus == 'unknown' ||
                         output.unkTaxaStatus == 'ncbi' ||
-                        output.unkTaxaStatus == 'invalid'",
+                        output.unkTaxaStatus == 'invalid' ||
+                        output.unkTaxaStatus == 'invalidParent'",
                         strong(h4("New taxa were found:")),
+                        HTML(
+                            "<p><em>Taxa missing from the current taxonomy 
+                            database. The source indicates whether the taxon ID 
+                            is valid in NCBI (<code>ncbi</code>), invalid 
+                            (<code>invalid</code>), found in newTaxa.txt
+                            (<code>new</code>), found in newTaxa.txt but with
+                            a parent ID missing from the taxonomy database
+                            (<code>invalid parent ID</code>), or potentially
+                            new (<code>unknown</code>).</em></p>"
+                        ),
                         DT::dataTableOutput("unkTaxaFull"),
                         br(),
                         downloadButton("unkTaxa.download", "Download ID list")
@@ -379,66 +390,68 @@ shinyUI(
                         hr(),
 
                         strong(h4("Sequence source:")),
-                        column(
-                            6,
-                            selectInput(
-                                "seedSource",
-                                label = h5("Seeds:"),
-                                choices = list(
-                                    "NCBI" = "ncbi",
-                                    "UniProt" = "uniprot",
-                                    "OrthoDB" = "orthodb",
-                                    "OMA" = "oma",
-                                    "User-defined" = "user"
+                        column(12,
+                            column(
+                                6,
+                                selectInput(
+                                    "seedSource",
+                                    label = h5("Seeds:"),
+                                    choices = list(
+                                        "NCBI" = "ncbi",
+                                        "UniProt" = "uniprot",
+                                        "OrthoDB" = "orthodb",
+                                        "OMA" = "oma",
+                                        "User-defined" = "user"
+                                    ),
+                                    selected = "uniprot",
+                                    width = 130
                                 ),
-                                selected = "uniprot",
-                                width = 130
+                                conditionalPanel(
+                                    condition = "input.seedSource == 'orthodb'",
+                                    textInput(
+                                        "orthodbSeedVer",
+                                        h5("OrthoDB version"),
+                                        value = "",
+                                        placeholder = "e.g. 10-1"
+                                    ) %>%
+                                        bs_embed_popover(
+                                            title = "",
+                                            content = "Leave blank for latest version",
+                                            placement = "bottom",
+                                            trigger = "hover"
+                                        )
+                                )
                             ),
-                            conditionalPanel(
-                                condition = "input.seedSource == 'orthodb'",
-                                textInput(
-                                    "orthodbSeedVer",
-                                    h5("OrthoDB version"),
-                                    value = "",
-                                    placeholder = "e.g. 10-1"
-                                ) %>%
-                                    bs_embed_popover(
-                                        title = "",
-                                        content = "Leave blank for latest version",
-                                        placement = "bottom",
-                                        trigger = "hover"
-                                    )
-                            )
-                        ),
-                        column(
-                            6,
-                            selectInput(
-                                "orthoSource",
-                                label = h5("Orthologs:"),
-                                choices = list(
-                                    "NCBI" = "ncbi",
-                                    "UniProt" = "uniprot",
-                                    "OrthoDB" = "orthodb",
-                                    "OMA" = "oma",
-                                    "User-defined" = "user"
+                            column(
+                                6,
+                                selectInput(
+                                    "orthoSource",
+                                    label = h5("Orthologs:"),
+                                    choices = list(
+                                        "NCBI" = "ncbi",
+                                        "UniProt" = "uniprot",
+                                        "OrthoDB" = "orthodb",
+                                        "OMA" = "oma",
+                                        "User-defined" = "user"
+                                    ),
+                                    selected = "ncbi",
+                                    width = 130
                                 ),
-                                selected = "ncbi",
-                                width = 130
-                            ),
-                            conditionalPanel(
-                                condition = "input.orthoSource == 'orthodb'",
-                                textInput(
-                                    "orthodbOrthoVer",
-                                    h5("OrthoDB version"),
-                                    value = "",
-                                    placeholder = "e.g. 10-1"
-                                ) %>%
-                                    bs_embed_popover(
-                                        title = "",
-                                        content = "Leave blank for latest version",
-                                        placement = "bottom",
-                                        trigger = "hover"
-                                    )
+                                conditionalPanel(
+                                    condition = "input.orthoSource == 'orthodb'",
+                                    textInput(
+                                        "orthodbOrthoVer",
+                                        h5("OrthoDB version"),
+                                        value = "",
+                                        placeholder = "e.g. 10-1"
+                                    ) %>%
+                                        bs_embed_popover(
+                                            title = "",
+                                            content = "Leave blank for latest version",
+                                            placement = "bottom",
+                                            trigger = "hover"
+                                        )
+                                )
                             )
                         ),
                         actionButton(
@@ -513,7 +526,7 @@ shinyUI(
                     verbatimTextOutput("taxDbPath"),
                     checkboxGroupInput(
                         "ignoreTaxa", "Exclude from input:", 
-                        choices = c("invalid taxa", "unknown taxa"),
+                        choices = c("all new taxa", "invalid taxa", "unknown taxa"),
                         inline = TRUE
                     ),
                     hr(),
@@ -522,7 +535,8 @@ shinyUI(
                     conditionalPanel(
                         condition = "output.unkTaxaStatus == 'unknown' ||
                         output.unkTaxaStatus == 'ncbi' ||
-                        output.unkTaxaStatus == 'invalid'",
+                        output.unkTaxaStatus == 'invalid' ||
+                        output.unkTaxaStatus == 'invalidParent'",
 
                         conditionalPanel(
                             condition = "output.unkTaxaStatus == 'invalid'",
@@ -533,6 +547,22 @@ shinyUI(
                                 profile input or both). IDs of non-NCBI taxa
                                 have to be greater than 999999005.</em></p>
                                 <p><em>Please replace those IDs before
+                                continuing!</em></p>"
+                            )
+                        ),
+
+                        conditionalPanel(
+                            condition =
+                                "output.unkTaxaStatus == 'invalidParent'",
+                            HTML(
+                                "<p><em>Some taxa in newTaxa.txt have a
+                                <span style=\"color: #ff0000;\">parent ID
+                                </span> that cannot be found in the current
+                                taxonomy database (<span style=\"color:
+                                #0000ff;\">Source=\"invalid parent ID\"
+                                </span>).</em></p>
+                                <p><em>Please correct the parentID column of
+                                those taxa in newTaxa.txt before
                                 continuing!</em></p>"
                             )
                         ),
@@ -611,7 +641,19 @@ shinyUI(
                         strong(h5("Choose (super)taxon of interest:")),
                         selectizeInput(
                             "inSelect", "", choices = NULL, selected = NULL
-                        ),
+                        ) %>%
+                            bsplus::bs_embed_popover(
+                                title = "",
+                                content = paste(
+                                    "Select the reference taxon to focus on.",
+                                    "The tool automatically suggests the most",
+                                    "frequently represented taxon in the input",
+                                    "file. Taxa are ordered by their taxonomic",
+                                    "distance to the selected reference."
+                                ),
+                                placement = "bottom",
+                                trigger = "hover"
+                            ),
                         uiOutput("numberOfInputTaxa.ui"),
                         uiOutput("taxonSelectionMsg"),
 

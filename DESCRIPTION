@@ -21,4 +21,4 @@ Imports:
     shinyFiles, shinyjs, stringr, tsne, svglite, umap, xml2, zoo, yaml
 Suggests: knitr, rmarkdown, testthat, OmaDB
 VignetteBuilder: knitr
-Config/roxygen2/version: 8.1.0
+Config/roxygen2/version: 8.1.1

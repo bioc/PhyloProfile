@@ -29,7 +29,6 @@ createProfilePlotUI <- function(id) {
         downloadButton(ns("profileDownload"),"Download profile",
                        class = "butDL"),
         br(),br(),hr(),
-        uiOutput(ns("brushedInfo.ui")),
         radioButtons(
             ns("showSettings"), "Show subplot settings",
             choices = c("show", "hide"), selected = "hide", inline = TRUE
@@ -73,15 +72,16 @@ createProfilePlotUI <- function(id) {
                     selected = "right"
                 )
             ),
-            br(),
-            downloadButton(
-                ns("profileSubDownload"),"Download subplot", class = "butDL"
-            ),
-            strong(""),
-            downloadButton(
-                ns("dataSubDownload"),"Download selected data", class = "butDL"
-            ),
             ns = NS(id)
+        ),
+        uiOutput(ns("brushedInfo.ui")),
+        br(),
+        downloadButton(
+            ns("profileSubDownload"),"Download subplot", class = "butDL"
+        ),
+        strong(""),
+        downloadButton(
+            ns("dataSubDownload"),"Download selected data", class = "butDL"
         ),
         tags$head(
             tags$style(HTML(
@@ -91,9 +91,10 @@ createProfilePlotUI <- function(id) {
 }
 
 createProfilePlot <- function(
-    input, output, session, data, clusteredDataHeat, applyCluster, parameters,
-    inSeq, inTaxa, rankSelect, inSelect, taxonHighlight, geneHighlight,
-    typeProfile, taxDB, superRank, allTaxa, mode = "normal"
+        input, output, session, data, clusteredDataHeat, applyCluster, parameters,
+        inSeq, inTaxa, rankSelect, inSelect, taxonHighlight, geneHighlight,
+        typeProfile, taxDB, superRank, allTaxa, mode = "normal",
+        labelMode = reactive("lca")
 ) {
     # data for heatmap ---------------------------------------------------------
     dataHeat <- reactive({
@@ -135,7 +136,7 @@ createProfilePlot <- function(
         }
         return(dataHeat)
     })
-
+    
     # basic profile plot -------------------------------------------------------
     basicProfile <- reactive({
         if (is.null(dataHeat())) stop("Profile data is NULL!")
@@ -169,13 +170,13 @@ createProfilePlot <- function(
             return(hp)
         }
     })
-
+    
     # get superRank ------------------------------------------------------------
     getSuperRank <- reactive({
         if (!is.null(superRank()) && superRank() == "") return(NULL)
         else return(superRank())
     })
-
+    
     # render heatmap profile ---------------------------------------------------
     output$plot <- renderPlot({
         if (is.null(basicProfile())) return()
@@ -194,7 +195,11 @@ createProfilePlot <- function(
                 p, dataHeat(), taxDB(), rankSelect(), getSuperRank(),
                 parameters()$xAxis, parameters()$font,
                 parameters()$groupLabelSize, parameters()$groupLabelDist,
-                parameters()$groupLabelAngle, refLine
+                parameters()$groupLabelAngle, refLine,
+                parameters()$divisionLineColor,
+                if (parameters()$xAxis == "taxa") parameters()$width
+                else parameters()$height,
+                labelMode()
             )
             if (rtCheck) {
                 checkpointp302 <- Sys.time()
@@ -206,14 +211,14 @@ createProfilePlot <- function(
             return(p)
         })
     })
-
+    
     output$plot.ui <- renderUI({
         ns <- session$ns
         if (typeProfile() == "customizedProfile") {
             if (is.null(inSeq()[1]) | is.null(inTaxa()[1])) return()
             else if (inSeq()[1] == "all" & inTaxa()[1] == "all")  return()
         }
-
+        
         shinycssloaders::withSpinner(
             if (mode() == "fast" & typeProfile() == "mainProfile") {
                 plotOutput(
@@ -231,7 +236,7 @@ createProfilePlot <- function(
                 )
         )
     })
-
+    
     output$profileDownload <- downloadHandler(
         filename = function() {
             c("profile.svg")
@@ -243,7 +248,11 @@ createProfilePlot <- function(
                     basicProfile(), dataHeat(), taxDB(), rankSelect(),
                     getSuperRank(), parameters()$xAxis, parameters()$font,
                     parameters()$groupLabelSize, parameters()$groupLabelDist,
-                    parameters()$groupLabelAngle, FALSE
+                    parameters()$groupLabelAngle, FALSE,
+                    parameters()$divisionLineColor,
+                    if (parameters()$xAxis == "taxa") parameters()$width
+                    else parameters()$height,
+                    labelMode()
                 ),
                 width = parameters()$width * 0.035,
                 height = parameters()$height * 0.035,
@@ -251,44 +260,70 @@ createProfilePlot <- function(
             )
         }
     )
-
+    
     # get info of brushed area -------------------------------------------------
     brushedData <- reactive({
         if (is.null(input$plotBrush)) return(data.frame())
-        dt <- brushedPoints(
-            dataHeat(), input$plotBrush, xvar = "supertaxon", yvar = "geneID"
-        )
+        if (parameters()$xAxis == "genes") {
+            dt <- brushedPoints(
+                dataHeat(), input$plotBrush, xvar = "geneID", yvar = "supertaxon"
+            )
+        } else {
+            dt <- brushedPoints(
+                dataHeat(), input$plotBrush, xvar = "supertaxon", yvar = "geneID"
+            )
+        }
         dt$geneID <- factor(dt$geneID)
         dt$geneID <- droplevels(dt$geneID)
         dt$supertaxon <- factor(dt$supertaxon)
         dt$supertaxon <- droplevels(dt$supertaxon)
         return(dt)
     })
-
+    
     # create subplot -----------------------------------------------------------
-    # ** show/hide subplot settings --------------------------------------------
+    # ** deactivate download buttons -------------------------------------------
     observe({
-        if (mode() == "fast" & typeProfile() == "mainProfile") {
-            updateRadioButtons(
-                session, "showSettings", "Show subplot settings",
-                choices = c("show", "hide"), selected = "show", inline = TRUE
-            )
-        } else {
-            updateRadioButtons(
-                session, "showSettings", "Show subplot settings",
-                choices = c("show", "hide"), selected = "hide", inline = TRUE
-            )
+        shinyjs::toggleState(
+            id = "profileSubDownload",
+            condition = nrow(brushedData()) > 0
+        )
+    })
+    observe({
+        shinyjs::toggleState(
+            id = "dataSubDownload",
+            condition = nrow(brushedData()) > 0
+        )
+    })
+    
+    # ** sync subplot x-axis with main profile x-axis --------------------------
+    # mainXAxis only invalidates when the main x-axis value really changes, so
+    # changing other main parameters (font, colors, ...) does not reset a
+    # x-axis that the user has switched manually for the subplot
+    mainXAxis <- reactiveVal(NULL)
+    observe({
+        newXAxis <- parameters()$xAxis
+        if (!is.null(newXAxis) && !identical(newXAxis, isolate(mainXAxis())))
+            mainXAxis(newXAxis)
+    })
+    observeEvent(mainXAxis(), {
+        if (!identical(mainXAxis(), input$xAxisSub)) {
+            updateRadioButtons(session, "xAxisSub", selected = mainXAxis())
         }
     })
-
+    
     # ** auto update subplot size ----------------------------------------------
+    # size is based on the CURRENT subplot x-axis (input$xAxisSub), so when the
+    # user switches xAxisSub, widthSub and heightSub are switched as well.
+    # This observer only writes widthSub/heightSub/legendPosSub and never reads
+    # them, so there is no update loop with the x-axis sync above.
     observe({
         req(nrow(brushedData()) > 0)
+        req(input$xAxisSub)
         df <- brushedData()
         nrTaxa <- length(unique(as.character(df$supertaxon)))
         nrGene <- length(unique(as.character(df$geneID)))
         adaptedSize <- adaptPlotSize(
-            nrTaxa, nrGene, parameters()$xAxis, parameters()$dotZoom
+            nrTaxa, nrGene, input$xAxisSub, parameters()$dotZoom
         )
         if (length(adaptedSize) > 0) {
             h <- adaptedSize[1]
@@ -327,7 +362,7 @@ createProfilePlot <- function(
             updateNumericInput(session, "heightSub", value = hv)
         }
     })
-
+    
     # ** get settings for subplot; replace xAxis, font size and legend pos -----
     subPlotParameters <- reactive({
         plotParameters <- parameters()
@@ -338,7 +373,7 @@ createProfilePlot <- function(
         plotParameters$legendSize <- input$legendSizeSub
         return(plotParameters)
     })
-
+    
     # ** render subplot --------------------------------------------------------
     output$brushedInfo.ui <- renderUI({
         ns <- session$ns
@@ -354,7 +389,7 @@ createProfilePlot <- function(
             )
         )
     })
-
+    
     output$subPlot <- renderPlot({
         req(nrow(brushedData()) > 0)
         p <- heatmapPlotting(brushedData(), subPlotParameters())
@@ -364,13 +399,17 @@ createProfilePlot <- function(
         )
         p <- addRankDivisionPlot(
             p, brushedData(), taxDB(), rankSelect(),
-            getSuperRank(), parameters()$xAxis, parameters()$font,
+            getSuperRank(), subPlotParameters()$xAxis, parameters()$font,
             parameters()$groupLabelSize, parameters()$groupLabelDist,
-            parameters()$groupLabelAngle, FALSE
+            parameters()$groupLabelAngle, FALSE,
+            parameters()$divisionLineColor,
+            if (subPlotParameters()$xAxis == "taxa") input$widthSub
+            else input$heightSub,
+            labelMode()
         )
         p
     })
-
+    
     # ** download subplot ------------------------------------------------------
     output$profileSubDownload <- downloadHandler(
         filename = function() {
@@ -380,9 +419,13 @@ createProfilePlot <- function(
             p <- heatmapPlotting(brushedData(), subPlotParameters())
             p <- addRankDivisionPlot(
                 p, brushedData(), taxDB(), rankSelect(),
-                getSuperRank(), parameters()$xAxis, parameters()$font,
+                getSuperRank(), subPlotParameters()$xAxis, parameters()$font,
                 parameters()$groupLabelSize, parameters()$groupLabelDist,
-                parameters()$groupLabelAngle, FALSE
+                parameters()$groupLabelAngle, FALSE,
+                parameters()$divisionLineColor,
+                if (subPlotParameters()$xAxis == "taxa") input$widthSub
+                else input$heightSub,
+                labelMode()
             )
             ggsave(
                 file, plot = p,
@@ -391,7 +434,7 @@ createProfilePlot <- function(
             )
         }
     )
-
+    
     # ** download data of subplot ----------------------------------------------
     output$dataSubDownload <- downloadHandler(
         filename = function() {
@@ -417,7 +460,7 @@ createProfilePlot <- function(
             )
         }
     )
-
+    
     # get info of clicked point on heatmap plot --------------------------------
     selectedpointInfo <- reactive({
         req(dataHeat())
@@ -429,16 +472,16 @@ createProfilePlot <- function(
         taxaList <- getNameList(taxDB())
         rankName <- rankSelect()
         inSelect <- taxaList$ncbiID[taxaList$fullName == inSelect()]
-
+        
         dataHeat <- dataHeat()
         if (mode() == "fast" & typeProfile() == "mainProfile")
             dataHeat <- brushedData()
-
+        
         if (is.null(dataHeat) | nrow(dataHeat) == 0) {
             message("WARNING: Data for heatmap is NULL!")
             return()
         }
-
+        
         if (typeProfile() == "customizedProfile") {
             # get sub-dataframe of selected taxa and sequences
             if (is.null(inSeq()[1]) | is.null(inTaxa()[1])) {
@@ -456,17 +499,22 @@ createProfilePlot <- function(
                 dataHeat <- subset(dataHeat, geneID %in% inSeq()
                                    & supertaxon %in% inTaxa())
             }
-
+            
             # drop all other supertaxon that are not in sub-dataframe
             dataHeat$supertaxon <- factor(dataHeat$supertaxon)
             dataHeat$geneID <- factor(dataHeat$geneID)
         }
-
+        
         # get values
         if (is.null(input$plotClick$x)) return()
         else {
             # get cooridiate point
-            if (parameters()$xAxis == "genes") {
+            # in fast mode, clicks come from the subplot, which can have its
+            # own x-axis (input$xAxisSub)
+            clickXAxis <- parameters()$xAxis
+            if (mode() == "fast" & typeProfile() == "mainProfile")
+                clickXAxis <- input$xAxisSub
+            if (clickXAxis == "genes") {
                 corX <- round(input$plotClick$y);
                 corY <- round(input$plotClick$x)
             } else {
@@ -529,17 +577,17 @@ createProfilePlot <- function(
                     )
                 )
             }
-
-
+            
+            
             # get ortholog ID
             orthoID <- dataHeat$orthoID[dataHeat$geneID == geneID
                                         & dataHeat$supertaxon == spec]
             totalOrtho <- length(orthoID)
-
+            
             # get working taxonomy level
             strain <- "Y"
             if (nlevels(as.factor(dataHeat$totalTaxa)) > 1) strain <- "N"
-
+            
             if (is.na(Percent)) return()
             else {
                 info <- c(
@@ -558,7 +606,7 @@ createProfilePlot <- function(
             }
         }
     })
-
-
+    
+    
     return(selectedpointInfo)
 }

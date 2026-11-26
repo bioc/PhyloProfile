@@ -499,9 +499,16 @@ heatmapPlottingFast <- function(data = NULL, parm = NULL) {
         legend.title = element_text(size = parm$legendSize),
         legend.text = element_text(size = parm$legendSize),
         legend.position = parm$mainLegend)
-    # Extract x, y, and color values
-    x_values <- as.numeric(data$supertaxon)
-    y_values <- as.numeric(data$geneID)
+    # Extract x, y, and color values (swap when genes are on the x-axis)
+    taxIdx  <- as.numeric(data$supertaxon)
+    geneIdx <- as.numeric(as.factor(data$geneID))
+    if (parm$xAxis == "genes") {
+        x_values <- geneIdx
+        y_values <- taxIdx
+    } else {
+        x_values <- taxIdx
+        y_values <- geneIdx
+    }
     # Create color vector: green if paralog > 1, else gradient by var1 or var2
     if (parm$colorVar == "var1") {
         cl <- colorRampPalette(c(parm$lowColorVar1, parm$highColorVar1))(100)[
@@ -517,6 +524,15 @@ heatmapPlottingFast <- function(data = NULL, parm = NULL) {
         geom_scattermost(
             cbind(x_values, y_values), color = cl,
             pointsize = 2 * (1 + parm$dotZoom), pixels = c(1000, 1000)
+        )
+    p <- p +
+        scale_x_continuous(
+            limits = c(0.5, max(x_values, na.rm = TRUE) + 0.5),
+            expand = c(0, 0)
+        ) +
+        scale_y_continuous(
+            limits = c(0.5, max(y_values, na.rm = TRUE) + 0.5),
+            expand = c(0, 0)
         )
     if (parm$colorVar == "var1") {
         p <- p +
@@ -538,8 +554,9 @@ heatmapPlottingFast <- function(data = NULL, parm = NULL) {
     # Add only one real co-ortholog point with fill = green to generate legend
     if(any(data$paralog > 1, na.rm = TRUE)) {
         co_point <- data[data$paralog > 1, ][1, ]
-        co_point$x <- as.numeric(co_point$supertaxon)
-        co_point$y <- as.numeric(co_point$geneID)
+        coIdx <- which(data$paralog > 1)[1]
+        co_point$x <- x_values[coIdx]
+        co_point$y <- y_values[coIdx]
         p <- p + geom_point(
             data = co_point, aes(x = x, y = y, fill = "Co-orthologs"),
             shape = 21, size = 3
@@ -670,7 +687,8 @@ highlightProfilePlot <- function(
 #' @usage addRankDivisionPlot(profilePlot = NULL, plotDf = NULL,
 #'     taxDB = NULL, workingRank = NULL, superRank = NULL, xAxis = "taxa",
 #'     font = "Arial", groupLabelSize = 14, groupLabelDist = 2,
-#'     groupLabelAngle = 90, refLine = TRUE)
+#'     groupLabelAngle = 90, refLine = TRUE, lineColor = "dodgerblue4",
+#'     plotSize = NULL, labelMode = "lca")
 #' @param profilePlot initial (highlighted) profile plot
 #' @param plotDf dataframe for plotting the heatmap phylogentic profile
 #' @param taxDB path to taxonomy database (taxonomyMatrix.txt file required!)
@@ -682,6 +700,14 @@ highlightProfilePlot <- function(
 #' @param groupLabelDist size of the plot area for rank labels
 #' @param groupLabelAngle angle of rank labels
 #' @param refLine add vertical line to separate reference taxon
+#' @param lineColor color of the division lines. Default = "dodgerblue4"
+#' @param plotSize plot size in px along the division axis (width if xAxis =
+#' "taxa", height if "genes"). Used to merge overlapping labels into their
+#' common ancestor (marked with "*"). NULL = never merge
+#' @param labelMode how to handle overlapping labels: "lca" (merge them
+#' into their lowest common ancestor, marked with "*") or "first" (show
+#' only the first label of the overlapping ones, followed by ",...").
+#' Default = "lca"
 #' @return A profile heatmap plot with highlighted gene and/or taxon of interest
 #' as ggplot object.
 #' @author Vinh Tran tran@bio.uni-frankfurt.de
@@ -725,22 +751,25 @@ addRankDivisionPlot <- function(
         profilePlot = NULL, plotDf = NULL, taxDB = NULL,
         workingRank = NULL, superRank = NULL, xAxis = "taxa", font = "Arial",
         groupLabelSize = 14, groupLabelDist = 2, groupLabelAngle = 90,
-        refLine = TRUE
+        refLine = TRUE, lineColor = "dodgerblue4", plotSize = NULL,
+        labelMode = "lca"
 ) {
     if (is.null(plotDf)) stop("Input data cannot be NULL!")
     if (is.null(profilePlot)) stop("Profile plot cannot be NULL!")
+    if (is.null(lineColor) || lineColor == "") lineColor <- "dodgerblue4"
+    
     profilePlot <- profilePlot + theme(text = element_text(family = font))
     if (is.null(workingRank) || is.null(superRank)) {
         if (refLine == TRUE) {
             # guideline for separating ref species
             if (xAxis == "genes") {
                 profilePlot <- profilePlot + labs(y = "Taxon") +
-                    geom_hline(yintercept = 0.5, colour = "dodgerblue4") +
-                    geom_hline(yintercept = 1.5, colour = "dodgerblue4")
+                    geom_hline(yintercept = 0.5, colour = lineColor) +
+                    geom_hline(yintercept = 1.5, colour = lineColor)
             } else
                 profilePlot <- profilePlot + labs(x = "Taxon") +
-                    geom_vline(xintercept = 0.5, colour = "dodgerblue4") +
-                    geom_vline(xintercept = 1.5, colour = "dodgerblue4")
+                    geom_vline(xintercept = 0.5, colour = lineColor) +
+                    geom_vline(xintercept = 1.5, colour = lineColor)
         }
         return(profilePlot)
     } else {
@@ -780,37 +809,158 @@ addRankDivisionPlot <- function(
                 return(tmp)
             }
         )
-        # add vertical line to divide taxon groups
-        max_taxa <- length(unique(as.character(plotDf$geneID)))
-        for(i in groupedList) {
-            min <- min(i$index)
-            max <- max(i$index)
-            if (xAxis == "taxa") {
-                profilePlot <- profilePlot +
-                    geom_vline(xintercept = min - 0.5, colour = "dodgerblue4") +
-                    geom_vline(xintercept = max + 0.5, colour = "dodgerblue4") +
-                    annotate(
-                        geom = "text", angle = groupLabelAngle, hjust = 0,
-                        size = groupLabelSize,
-                        x = min,
-                        y = max_taxa + 0.5,
-                        label = unique(as.character(i$name))
+        # collect groups (one per superRank taxon), ordered by position
+        groupDf <- do.call(rbind, lapply(groupedList, function(i) {
+            data.frame(
+                id = i[[superRank]][1], name = as.character(i$name[1]),
+                min = min(i$index), max = max(i$index),
+                stringsAsFactors = FALSE
+            )
+        }))
+        groupDf <- groupDf[order(groupDf$min), ]
+        nG <- nrow(groupDf)
+        # minimum distance (in cells) between two labels
+        needCells <- 0
+        if (!is.null(plotSize) && isTRUE(plotSize > 0)) {
+            nCells <- nlevels(as.factor(plotDf$supertaxonID))
+            pxPerCell <- plotSize * 0.85 / nCells        # ~85% of plot = panel
+            labelPx <- groupLabelSize * 72 / 25.4 * 1.3  # text height + gap
+            needCells <- labelPx / pxPerCell
+        }
+        if (identical(labelMode, "first")) {
+            # keep the first label of a run of overlapping labels, add ",..."
+            cl <- integer(nG)
+            cl[1] <- 1
+            start <- groupDf$min[1]
+            for (k in seq_len(nG)[-1]) {
+                if (groupDf$min[k] - start >= needCells) {
+                    cl[k] <- cl[k - 1] + 1
+                    start <- groupDf$min[k]
+                } else cl[k] <- cl[k - 1]
+            }
+            labelDf <- do.call(rbind, lapply(
+                split(seq_len(nG), cl),
+                function(idx) {
+                    lab <- groupDf$name[idx[1]]
+                    if (length(idx) > 1) lab <- paste0(lab, ",...")
+                    data.frame(
+                        pos = min(groupDf$min[idx]), label = lab,
+                        from = min(groupDf$min[idx]),
+                        to = max(groupDf$max[idx]), merged = FALSE,
+                        stringsAsFactors = FALSE
                     )
-
-            } else {
-                profilePlot <- profilePlot +
-                    geom_hline(yintercept = min - 0.5, colour = "dodgerblue4") +
-                    geom_hline(yintercept = max + 0.5, colour = "dodgerblue4") +
-                    annotate(
-                        geom = "text", angle = groupLabelAngle - 90, hjust = 0,
-                        size = groupLabelSize,
-                        y = min,
-                        x = max_taxa + 1,
-                        label = unique(as.character(i$name))
+                }
+            ))
+        } else {
+            # ancestors of each group above superRank (columns go low -> high)
+            cols <- colnames(taxMatrix)
+            rIdx <- match(superRank, cols)
+            higher <- if (rIdx < length(cols)) cols[(rIdx + 1):
+                        length(cols)] else character(0)
+            subTax <- as.data.frame(
+                taxMatrix[taxMatrix[[superRank]] %in% groupDf$id, ]
+            )
+            rowIdx <- match(groupDf$id, subTax[[superRank]])
+            ancMat <- matrix(
+                paste0("self_", groupDf$id), nrow = nG, 
+                ncol = max(1, length(higher))
+            )
+            for (j in seq_along(higher)) {
+                v <- as.character(subTax[[higher[j]]][rowIdx])
+                ancMat[, j] <- ifelse(
+                    is.na(v) | v == "", paste0("NA_", groupDf$id), v
+                )
+            }
+            # lift overlapping groups one level at a time; neighbours sharing
+            # the same ancestor at their level are merged into one label.
+            # All other groups belonging to that ancestor are lifted as well,
+            # even if their own labels do not overlap
+            lv <- integer(nG)
+            getClusters <- function(lv) {
+                key <- ifelse(
+                    lv == 0, paste0("0:", groupDf$id),
+                    paste0(lv, ":", ancMat[cbind(seq_len(nG), pmax(lv, 1))])
+                )
+                cumsum(c(TRUE, key[-1] != key[-nG]))
+            }
+            cl <- getClusters(lv)
+            for (L in seq_along(higher)) {
+                starts <- tapply(groupDf$min, cl, min)
+                bad <- which(diff(starts) < needCells)
+                if (length(bad) == 0) break
+                hit <- cl %in% c(bad, bad + 1)
+                lv[ancMat[, L] %in% unique(ancMat[hit, L])] <- L
+                cl <- getClusters(lv)
+            }
+            # one label per cluster: own name, or ancestor name + "*"
+            labelDf <- do.call(
+                rbind, lapply(split(seq_len(nG), cl), function(idx) {
+                    if (length(idx) == 1) {
+                        lab <- groupDf$name[idx]
+                    } else {
+                        anc <- ancMat[idx[1], lv[idx[1]]]
+                        lab <- nameList$fullName[
+                            as.character(nameList$ncbiID) == anc][1]
+                        if (is.na(lab)) lab <- groupDf$name[idx[1]]
+                        lab <- paste0(lab, "*")
+                    }
+                    data.frame(
+                        pos = min(groupDf$min[idx]), label = as.character(lab),
+                        from = min(groupDf$min[idx]),
+                        to = max(groupDf$max[idx]), merged = length(idx) > 1,
+                        stringsAsFactors = FALSE
                     )
+            }))
+        }
+        # labels still overlapping at the top level are hidden
+        keep <- logical(nrow(labelDf))
+        last <- -Inf
+        for (k in seq_len(nrow(labelDf))) {
+            if (labelDf$pos[k] - last >= needCells) {
+                keep[k] <- TRUE
+                last <- labelDf$pos[k]
             }
         }
-        longestLabelLen <- max(nchar(unique(as.character(subTaxMatrix$name))))
+        labelDf <- labelDf[keep, , drop = FALSE]
+        # draw division lines (all groups) and labels
+        linePos <- unique(c(groupDf$min - 0.5, groupDf$max + 0.5))
+        # bars along the plot edge showing the extent of merged (LCA) groups;
+        # slightly shortened so that neighbouring bars stay separated
+        barDf <- labelDf[labelDf$merged, , drop = FALSE]
+        barFrom <- barDf$from - 0.5 + 0.2
+        barTo <- barDf$to + 0.5 - 0.2
+        # leading space keeps labels clear of the bars
+        labelDf$label <- paste0(" ", labelDf$label)
+        if (xAxis == "taxa") {
+            if (nrow(barDf) > 0)
+                profilePlot <- profilePlot + annotate(
+                    geom = "segment", x = barFrom, xend = barTo,
+                    y = Inf, yend = Inf, colour = lineColor,
+                    linewidth = 2, lineend = "butt"
+                )
+            profilePlot <- profilePlot +
+                geom_vline(xintercept = linePos, colour = lineColor) +
+                annotate(
+                    geom = "text", angle = groupLabelAngle,
+                    hjust = 0, vjust = 1.2, size = groupLabelSize,
+                    x = labelDf$pos - 0.5, y = Inf, label = labelDf$label
+                )
+        } else {
+            if (nrow(barDf) > 0)
+                profilePlot <- profilePlot + annotate(
+                    geom = "segment", y = barFrom, yend = barTo,
+                    x = Inf, xend = Inf, colour = lineColor,
+                    linewidth = 2, lineend = "butt"
+                )
+            profilePlot <- profilePlot +
+                geom_hline(yintercept = linePos, colour = lineColor) +
+                annotate(
+                    geom = "text", angle = groupLabelAngle - 90,
+                    hjust = -0.05, vjust = -0.3, size = groupLabelSize,
+                    y = labelDf$pos - 0.5, x = Inf, label = labelDf$label
+                )
+        }
+        longestLabelLen <- max(nchar(labelDf$label))
         marginSize <- longestLabelLen * groupLabelSize * groupLabelDist
         if (xAxis == "taxa") {
             return(
@@ -829,7 +979,8 @@ addRankDivisionPlot <- function(
                     theme(
                         plot.margin = margin(
                             t = 10, r = marginSize, b = 10, l = 10
-                        )
+                        ),
+                        legend.position = "top"
                     )
             )
     }

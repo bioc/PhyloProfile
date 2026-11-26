@@ -13,7 +13,8 @@ phylogenetic profiles (see ?fullProcessedProfile or ?parseInfoProfile)}
 
 \item{taxaCount}{dataframe counting present taxa in each supertaxon}
 
-\item{rankName}{working taxonomy rank (e.g. "species", "genus", "family")}
+\item{rankName}{working taxonomy rank (e.g. "strain", "species", "genus",
+"family", "order")}
 
 \item{refTaxon}{reference taxon name (e.g. "Homo sapiens", "Homo" or
 "Hominidae")}
