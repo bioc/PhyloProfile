@@ -2,3 +2,22 @@
   max-height: 80px;
   overflow-y: auto;
 }
+
+/* filter rows of Main / Customized profile: align "Apply filter" and
+   "Reset cutoffs" buttons at the bottom of their columns */
+.cutoff-row {
+  display: flex;
+  flex-wrap: wrap;
+}
+.cutoff-row:before,
+.cutoff-row:after {
+  display: none;
+}
+.cutoff-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.cutoff-col > .btn {
+  margin-top: auto;
+}

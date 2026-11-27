@@ -208,6 +208,118 @@ adaptPlotSize <- function(nrTaxa = 0, nrGene = 0, xAxis = "taxa", dotZoom = 0) {
     } else return(c())
 }
 
+#' Estimate profile plot size (in px) from the data AND the space needed by
+#' axis labels, supertaxon (division) labels and the legend.
+#' @param nrTaxa number of (super)taxa
+#' @param nrGene number of genes
+#' @param xAxis "taxa" or "genes"
+#' @param dotZoom dot zoom factor (-1 to 3)
+#' @param taxaLabelLen max number of characters of taxon labels
+#' @param geneLabelLen max number of characters of gene labels
+#' @param xSize,ySize font size of x/y axis labels (pt)
+#' @param xAngle angle of x-axis labels (degree)
+#' @param groupLabelLen max number of characters of supertaxon labels
+#'     (0 = no supertaxon labels)
+#' @param groupLabelSize,groupLabelDist size/distance of supertaxon labels
+#'     (as used in addRankDivisionPlot)
+#' @param legendPos legend position ("right", "left", "top", "bottom", "none")
+#' @param legendSize font size of the legend (pt)
+#' @param fastMode TRUE for heatmapPlottingFast (no axis tick labels)
+#' @return c(number of items on y-axis, height, width); unlike adaptPlotSize()
+#'     this never returns an empty vector, so callers only need to cap it
+#' @author Vinh Tran {tran@bio.uni-frankfurt.de}
+
+estimatePlotSize <- function(
+    nrTaxa = 0, nrGene = 0, xAxis = "taxa", dotZoom = 0,
+    taxaLabelLen = 0, geneLabelLen = 0, xSize = 14, ySize = 14, xAngle = 60,
+    groupLabelLen = 0, groupLabelSize = 7, groupLabelDist = 1.5,
+    legendPos = "right", legendSize = 12, fastMode = FALSE
+) {
+    orDefault <- function(x, d) {
+        if (is.null(x) || length(x) == 0 || is.na(x[1])) d else x[1]
+    }
+    dotZoom <- orDefault(dotZoom, 0)
+    taxaLabelLen <- orDefault(taxaLabelLen, 0)
+    geneLabelLen <- orDefault(geneLabelLen, 0)
+    xSize <- orDefault(xSize, 14); ySize <- orDefault(ySize, 14)
+    xAngle <- orDefault(xAngle, 60)
+    groupLabelLen <- orDefault(groupLabelLen, 0)
+    groupLabelSize <- orDefault(groupLabelSize, 7)
+    groupLabelDist <- orDefault(groupLabelDist, 1.5)
+    legendPos <- orDefault(legendPos, "right")
+    legendSize <- orDefault(legendSize, 12)
+    charW <- 0.55 # average character width relative to font size
+    # items and label lengths on each axis
+    if (xAxis == "taxa") {
+        nY <- nrGene; nX <- nrTaxa
+        xLabLen <- taxaLabelLen; yLabLen <- geneLabelLen
+    } else {
+        nY <- nrTaxa; nX <- nrGene
+        xLabLen <- geneLabelLen; yLabLen <- taxaLabelLen
+    }
+    # panel: 12 px per gene/taxon at dotZoom = 0, plus ~1 cell of padding
+    cell <- 12 * max(1 + dotZoom, 0.25)
+    panelH <- max(100, (nY + 1.2) * cell)
+    panelW <- max(100, (nX + 1.2) * cell)
+    # axis titles + outer plot margin
+    top <- 10; right <- 10
+    bottom <- 10 + 1.6 * xSize
+    left <- 10 + 1.6 * ySize
+    # axis tick labels (hidden in fast mode)
+    if (!fastMode) {
+        a <- xAngle * pi / 180
+        xLabW <- xLabLen * xSize * charW
+        bottom <- bottom + xLabW * abs(sin(a)) + xSize * abs(cos(a)) + 5
+        left <- left + yLabLen * ySize * charW + 5
+        # first rotated x label sticks out to the left of the panel
+        left <- max(left, xLabW * abs(cos(a)) + 10)
+    }
+    # supertaxon labels: same margin as set in addRankDivisionPlot()
+    if (groupLabelLen > 0) {
+        groupMargin <- (groupLabelLen + 1) * groupLabelSize * groupLabelDist
+        if (xAxis == "taxa") top <- max(top, groupMargin)
+        else {
+            right <- max(right, groupMargin)
+            legendPos <- "top" # forced by addRankDivisionPlot()
+        }
+    }
+    # legend
+    if (legendPos %in% c("right", "left")) {
+        right <- right + legendSize * 9 + 30
+    } else if (legendPos %in% c("top", "bottom")) {
+        top <- top + legendSize * 4 + 20
+    }
+    hv <- ceiling(panelH + top + bottom)
+    wv <- ceiling(panelW + left + right)
+    return(c(nY, hv, wv))
+}
+
+#' Get max length of supertaxon (division) labels
+#' @param taxonIDs NCBI IDs of the (super)taxa at the working rank
+#' @param workingRank working taxonomy rank (e.g. species)
+#' @param superRank rank used for the division lines (e.g. phylum)
+#' @param taxDB path to taxonomy database
+#' @return max number of characters of the labels (0 if no superRank), incl.
+#'     room for the "*" / ",..." marks added by addRankDivisionPlot()
+#' @author Vinh Tran {tran@bio.uni-frankfurt.de}
+
+getSuperRankLabelLen <- function(
+    taxonIDs = NULL, workingRank = NULL, superRank = NULL, taxDB = NULL
+) {
+    if (is.null(superRank) || superRank == "" || is.null(workingRank) ||
+        length(taxonIDs) == 0) return(0)
+    tryCatch({
+        taxMatrix <- getTaxonomyMatrix(taxDB)
+        superIDs <- unique(
+            taxMatrix[taxMatrix[[workingRank]] %in% taxonIDs, superRank]
+        )
+        nameList <- getNameList(taxDB)
+        labels <- nameList$fullName[nameList$ncbiID %in% superIDs]
+        if (length(labels) == 0) return(15)
+        max(nchar(as.character(labels))) + 4
+    }, error = function(e) 15)
+}
+
 #' Scale a list of values into 0-1
 #' @param x a numeric vector
 #' @return a vector with values scaled from 0 to 1

@@ -14,6 +14,9 @@
 #' @param superRank taxonomy rank for division lines (e.g. superkingdom)
 #' @param allTaxa list of all input (super)taxa and their ncbi IDs
 #' @param mode plot mode, either "fast" or "normal"
+#' @param speciesTree NULL or list(tree = phylo, taxaMap = df(abbrName,
+#' supertaxon), height = tree height in mm) for drawing a species tree aligned
+#' to the taxa (main plot in normal mode, subplot in fast mode)
 #' @taxDB Path to the taxonomy DB files
 #' @return info for selected point on the profile
 #' @author Vinh Tran {tran@bio.uni-frankfurt.de}
@@ -94,7 +97,7 @@ createProfilePlot <- function(
         input, output, session, data, clusteredDataHeat, applyCluster, parameters,
         inSeq, inTaxa, rankSelect, inSelect, taxonHighlight, geneHighlight,
         typeProfile, taxDB, superRank, allTaxa, mode = "normal",
-        labelMode = reactive("lca")
+        labelMode = reactive("lca"), speciesTree = reactive(NULL)
 ) {
     # data for heatmap ---------------------------------------------------------
     dataHeat <- reactive({
@@ -177,6 +180,161 @@ createProfilePlot <- function(
         else return(superRank())
     })
     
+    # add species tree aligned to the taxa ----------------------------------
+    # (main plot only in normal mode; subplot of fast mode with sub = TRUE)
+    # store: reactiveVal that keeps the tree layout for the hover info
+    treeLayoutMain <- reactiveVal(NULL)
+    treeLayoutSub <- reactiveVal(NULL)
+    addTreeToPlot <- function(
+        p, df, xAxis = parameters()$xAxis, sub = FALSE, store = NULL
+    ) {
+        if (!is.null(store)) store(NULL)
+        if (!sub && mode() == "fast" && typeProfile() == "mainProfile")
+            return(p)
+        st <- speciesTree()
+        if (is.null(st) || is.null(st$tree)) return(p)
+        res <- addSpeciesTreePlot(
+            p, df, st$tree, st$taxaMap, xAxis, st$height,
+            returnLayout = TRUE
+        )
+        if (!is.null(store)) store(res$layout)
+        return(res$plot)
+    }
+
+    # hover info for the internal nodes of the species tree -------------------
+    hoverTaxMatrix <- reactive({ getTaxonomyMatrix(taxDB()) })
+    hoverNameList <- reactive({ getNameList(taxDB()) })
+
+    # find the tree node (branch) next to the mouse pointer. mouse: position
+    # (css px) on the plot image, sent by the JS in treeHoverContainer().
+    # Shiny's own hover is not used, because it is not sent outside the panel
+    getTreeNodeAtHover <- function(mouse, layout, tolerance = 1.5) {
+        if (is.null(mouse) || is.null(layout)) return(NULL)
+        di <- layout$drawInfo
+        if (is.null(di$offset) || is.null(di$left)) return(NULL)
+        # renderPlot draws with res = 72, i.e. 1 inch on the device = 72 css px
+        pxPerMm <- 72 / 25.4
+        left <- di$left * 72
+        right <- di$right * 72
+        bottom <- (di$devHeight - di$bottom) * 72
+        top <- (di$devHeight - di$top) * 72
+        if (layout$xAxis == "genes") {
+            along <- 0.5 + (bottom - mouse$y) / (bottom - top) * layout$nCol
+            away <- (left - mouse$x) / pxPerMm
+            mmPerUnit <- (bottom - top) / layout$nCol / pxPerMm
+        } else {
+            along <- 0.5 + (mouse$x - left) / (right - left) * layout$nCol
+            away <- (mouse$y - bottom) / pxPerMm
+            mmPerUnit <- (right - left) / layout$nCol / pxPerMm
+        }
+        away <- away - di$offset
+        if (!is.finite(away) || away < 0) return(NULL)
+        # distance (mm) from the pointer to each branch segment
+        sg <- layout$segments
+        px <- along * mmPerUnit
+        x0 <- sg$along0 * mmPerUnit; x1 <- sg$along1 * mmPerUnit
+        y0 <- sg$away0; y1 <- sg$away1
+        dx <- x1 - x0; dy <- y1 - y0
+        len2 <- dx^2 + dy^2
+        t <- ifelse(len2 > 0, ((px - x0) * dx + (away - y0) * dy) / len2, 0)
+        t <- pmin(pmax(t, 0), 1)
+        dist <- sqrt((x0 + t * dx - px)^2 + (y0 + t * dy - away)^2)
+        if (min(dist) > tolerance) return(NULL)
+        return(sg$node[which.min(dist)])
+    }
+
+    # container for a plot with species tree: sends the mouse position on the
+    # plot image to input[[inputId]] (throttled) and holds the tooltip
+    treeHoverContainer <- function(plotUI, inputId, tooltipId) {
+        div(
+            class = "pp-tree-hover", `data-input` = inputId,
+            style = "position: relative;",
+            singleton(tags$head(tags$script(HTML(
+                "if (!window.ppTreeHoverInit) {
+                    window.ppTreeHoverInit = true;
+                    var ppLast = 0;
+                    $(document).on('mousemove', '.pp-tree-hover img',
+                        function(e) {
+                            var now = Date.now();
+                            if (now - ppLast < 80) return;
+                            ppLast = now;
+                            var r = this.getBoundingClientRect();
+                            var id = $(this).closest('.pp-tree-hover')
+                                .data('input');
+                            Shiny.setInputValue(id, {
+                                x: e.clientX - r.left, y: e.clientY - r.top
+                            }, {priority: 'event'});
+                        });
+                    $(document).on('mouseleave', '.pp-tree-hover img',
+                        function() {
+                            var id = $(this).closest('.pp-tree-hover')
+                                .data('input');
+                            Shiny.setInputValue(id, null, {priority: 'event'});
+                        });
+                }"
+            )))),
+            plotUI,
+            uiOutput(tooltipId)
+        )
+    }
+
+    # name of a tree node: lowest taxon shared by all its tips
+    getTreeNodeLabel <- function(node, layout) {
+        tips <- layout$descTips[[node]]
+        if (layout$isTip[node]) return(tips)
+        label <- "Unknown"
+        abbr <- layout$repAbbr[tips]
+        abbr <- abbr[!is.na(abbr)]
+        if (length(abbr) > 0) {
+            tm <- hoverTaxMatrix()
+            rows <- tm[as.character(tm$abbrName) %in% abbr, , drop = FALSE]
+            rankCols <- setdiff(
+                colnames(tm), c("abbrName", "ncbiID", "fullName")
+            )
+            for (rc in rankCols) {
+                v <- unique(as.character(rows[[rc]]))
+                if (length(v) == 1 && !is.na(v) && v != "") {
+                    nl <- hoverNameList()
+                    hit <- nl[as.character(nl$ncbiID) == v, ]
+                    if (nrow(hit) > 0) label <- paste0(
+                        hit$fullName[1], " (", hit$rank[1], ")"
+                    )
+                    break
+                }
+            }
+        }
+        return(paste0(label, " - ", length(tips), " taxa"))
+    }
+
+    makeTreeTooltip <- function(hover, layout) {
+        node <- tryCatch(
+            getTreeNodeAtHover(hover, layout), error = function(e) NULL
+        )
+        if (is.null(node)) return(NULL)
+        label <- tryCatch(
+            getTreeNodeLabel(node, layout), error = function(e) NULL
+        )
+        if (is.null(label)) return(NULL)
+        div(
+            style = paste0(
+                "position: absolute; z-index: 100; pointer-events: none; ",
+                "left: ", hover$x + 12, "px; ",
+                "top: ", hover$y + 12, "px; ",
+                "background: rgba(255,255,255,0.95); border: 1px solid #999; ",
+                "border-radius: 3px; padding: 2px 6px; font-size: 12px; ",
+                "white-space: nowrap;"
+            ),
+            label
+        )
+    }
+
+    output$treeHoverInfo <- renderUI({
+        makeTreeTooltip(input$treeMouse, treeLayoutMain())
+    })
+    output$subTreeHoverInfo <- renderUI({
+        makeTreeTooltip(input$subTreeMouse, treeLayoutSub())
+    })
+
     # render heatmap profile ---------------------------------------------------
     output$plot <- renderPlot({
         if (is.null(basicProfile())) return()
@@ -201,6 +359,7 @@ createProfilePlot <- function(
                 else parameters()$height,
                 labelMode()
             )
+            p <- addTreeToPlot(p, dataHeat(), store = treeLayoutMain)
             if (rtCheck) {
                 checkpointp302 <- Sys.time()
                 print(paste(
@@ -219,22 +378,29 @@ createProfilePlot <- function(
             else if (inSeq()[1] == "all" & inTaxa()[1] == "all")  return()
         }
         
-        shinycssloaders::withSpinner(
-            if (mode() == "fast" & typeProfile() == "mainProfile") {
+        if (mode() == "fast" & typeProfile() == "mainProfile") {
+            shinycssloaders::withSpinner(
                 plotOutput(
                     ns("plot"),
                     width = parameters()$width,
                     height = parameters()$height,
                     brush = ns("plotBrush")
                 )
-            } else
-                plotOutput(
-                    ns("plot"),
-                    width = parameters()$width,
-                    height = parameters()$height,
-                    click = ns("plotClick")
-                )
-        )
+            )
+        } else {
+            # container with hover tooltip for the species tree
+            treeHoverContainer(
+                shinycssloaders::withSpinner(
+                    plotOutput(
+                        ns("plot"),
+                        width = parameters()$width,
+                        height = parameters()$height,
+                        click = ns("plotClick")
+                    )
+                ),
+                ns("treeMouse"), ns("treeHoverInfo")
+            )
+        }
     })
     
     output$profileDownload <- downloadHandler(
@@ -244,7 +410,7 @@ createProfilePlot <- function(
         content = function(file) {
             ggsave(
                 file,
-                plot = addRankDivisionPlot(
+                plot = addTreeToPlot(addRankDivisionPlot(
                     basicProfile(), dataHeat(), taxDB(), rankSelect(),
                     getSuperRank(), parameters()$xAxis, parameters()$font,
                     parameters()$groupLabelSize, parameters()$groupLabelDist,
@@ -253,7 +419,7 @@ createProfilePlot <- function(
                     if (parameters()$xAxis == "taxa") parameters()$width
                     else parameters()$height,
                     labelMode()
-                ),
+                ), dataHeat()),
                 width = parameters()$width * 0.035,
                 height = parameters()$height * 0.035,
                 units = "cm", dpi = 300, device = "svg", limitsize = FALSE
@@ -295,6 +461,25 @@ createProfilePlot <- function(
         )
     })
     
+    # ** show subplot settings whenever subplot data is available -------------
+    # switch "Show subplot settings" to "show" when a selection with data is
+    # made (and back to "hide" when the selection is cleared). Only reacts to
+    # changes in availability, so the user can still hide the settings manually
+    # for the current selection.
+    subDataAvailable <- reactiveVal(FALSE)
+    observe({
+        available <- tryCatch(
+            nrow(brushedData()) > 0, error = function(e) FALSE
+        )
+        if (!identical(available, isolate(subDataAvailable()))) {
+            subDataAvailable(available)
+            updateRadioButtons(
+                session, "showSettings",
+                selected = if (available) "show" else "hide"
+            )
+        }
+    })
+
     # ** sync subplot x-axis with main profile x-axis --------------------------
     # mainXAxis only invalidates when the main x-axis value really changes, so
     # changing other main parameters (font, colors, ...) does not reset a
@@ -311,56 +496,68 @@ createProfilePlot <- function(
         }
     })
     
+    # ** max length of supertaxon (division) labels of the subplot -----------
+    subSuperRankLabelLen <- reactive({
+        req(nrow(brushedData()) > 0)
+        if (is.null(getSuperRank())) return(0)
+        getSuperRankLabelLen(
+            unique(as.character(brushedData()$supertaxonID)), rankSelect(),
+            getSuperRank(), taxDB()
+        )
+    })
+
     # ** auto update subplot size ----------------------------------------------
     # size is based on the CURRENT subplot x-axis (input$xAxisSub), so when the
     # user switches xAxisSub, widthSub and heightSub are switched as well.
+    # The size includes the space for axis labels, supertaxon labels and the
+    # legend (see estimatePlotSize()).
     # This observer only writes widthSub/heightSub/legendPosSub and never reads
-    # them, so there is no update loop with the x-axis sync above.
+    # them reactively, so there is no update loop with the x-axis sync above.
     observe({
         req(nrow(brushedData()) > 0)
         req(input$xAxisSub)
         df <- brushedData()
         nrTaxa <- length(unique(as.character(df$supertaxon)))
         nrGene <- length(unique(as.character(df$geneID)))
-        adaptedSize <- adaptPlotSize(
-            nrTaxa, nrGene, input$xAxisSub, parameters()$dotZoom
-        )
-        if (length(adaptedSize) > 0) {
-            h <- adaptedSize[1]
-            hv <- adaptedSize[2]
-            wv <- adaptedSize[3]
-            if (hv > 25000) hv <- 25000
-            if (wv > 25000) wv <- 25000
-            if (h <= 20) {
-                if (superRank() == "") {
-                    updateSelectInput(
-                        session, "legendPosSub", label = "Legend position:",
-                        choices = list("Right" = "right",
-                                       "Left" = "left",
-                                       "Top" = "top",
-                                       "Bottom" = "bottom",
-                                       "Hide" = "none"),
-                        selected = "top"
-                    )
-                } else {
-                    updateSelectInput(
-                        session, "legendPosSub", label = "Legend position:",
-                        choices = list("Right" = "right",
-                                       "Left" = "left",
-                                       "Top" = "top",
-                                       "Bottom" = "bottom",
-                                       "Hide" = "none"),
-                        selected = "right"
-                    )
-                }
-                updateNumericInput(session, "widthSub", value = wv  + 50)
-            } else if (h <= 30) {
-                updateNumericInput(session, "widthSub", value = wv + 50)
-            } else {
-                updateNumericInput(session, "widthSub", value = wv)
-            }
-            updateNumericInput(session, "heightSub", value = hv)
+        geneLabels <- df$geneID
+        if (identical(parameters()$geneIdType, "geneName") &&
+            "geneName" %in% colnames(df)) geneLabels <- df$geneName
+        groupLabelLen <- subSuperRankLabelLen()
+        nrY <- if (input$xAxisSub == "taxa") nrGene else nrTaxa
+        # legend: on top for small profiles without division lines
+        legendPos <- isolate(input$legendPosSub)
+        if (is.null(legendPos) || legendPos == "") legendPos <- "right"
+        if (nrY <= 20) {
+            legendPos <- if (groupLabelLen == 0) "top" else "right"
+            updateSelectInput(
+                session, "legendPosSub", label = "Legend position:",
+                choices = list("Right" = "right",
+                               "Left" = "left",
+                               "Top" = "top",
+                               "Bottom" = "bottom",
+                               "Hide" = "none"),
+                selected = legendPos
+            )
         }
+        fontSize <- if (is.null(input$fontSizeSub)) parameters()$xSize
+            else input$fontSizeSub
+        legendSize <- if (is.null(input$legendSizeSub)) parameters()$legendSize
+            else input$legendSizeSub
+        adaptedSize <- estimatePlotSize(
+            nrTaxa, nrGene, input$xAxisSub, dotZoom = parameters()$dotZoom,
+            taxaLabelLen = max(nchar(as.character(df$supertaxon))),
+            geneLabelLen = max(nchar(as.character(geneLabels)), na.rm = TRUE),
+            xSize = fontSize, ySize = fontSize,
+            xAngle = parameters()$xAngle,
+            groupLabelLen = groupLabelLen,
+            groupLabelSize = parameters()$groupLabelSize,
+            groupLabelDist = parameters()$groupLabelDist,
+            legendPos = legendPos, legendSize = legendSize
+        )
+        updateNumericInput(
+            session, "widthSub", value = min(25000, adaptedSize[3]))
+        updateNumericInput(
+            session, "heightSub", value = min(25000, adaptedSize[2]))
     })
     
     # ** get settings for subplot; replace xAxis, font size and legend pos -----
@@ -371,6 +568,12 @@ createProfilePlot <- function(
         plotParameters$xSize <- input$fontSizeSub
         plotParameters$ySize <- input$fontSizeSub
         plotParameters$legendSize <- input$legendSizeSub
+        # vertical taxon labels when the species tree is shown below them
+        treeShown <- tryCatch(
+            !is.null(speciesTree()), error = function(e) FALSE
+        )
+        if (identical(input$xAxisSub, "taxa") && isTRUE(treeShown))
+            plotParameters$xAngle <- 90
         return(plotParameters)
     })
     
@@ -381,11 +584,14 @@ createProfilePlot <- function(
         tagList(
             h4("SELECTED DATA"),
             br(),
-            plotOutput(
-                ns("subPlot"),
-                width = input$widthSub,
-                height = input$heightSub,
-                click = ns("plotClick")
+            treeHoverContainer(
+                plotOutput(
+                    ns("subPlot"),
+                    width = input$widthSub,
+                    height = input$heightSub,
+                    click = ns("plotClick")
+                ),
+                ns("subTreeMouse"), ns("subTreeHoverInfo")
             )
         )
     })
@@ -407,6 +613,10 @@ createProfilePlot <- function(
             else input$heightSub,
             labelMode()
         )
+        p <- addTreeToPlot(
+            p, brushedData(), subPlotParameters()$xAxis, sub = TRUE,
+            store = treeLayoutSub
+        )
         p
     })
     
@@ -426,6 +636,9 @@ createProfilePlot <- function(
                 if (subPlotParameters()$xAxis == "taxa") input$widthSub
                 else input$heightSub,
                 labelMode()
+            )
+            p <- addTreeToPlot(
+                p, brushedData(), subPlotParameters()$xAxis, sub = TRUE
             )
             ggsave(
                 file, plot = p,

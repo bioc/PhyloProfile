@@ -18,6 +18,7 @@ shinyUI(
             condition = "input.tabs=='Main profile'",
             wellPanel(
                 fluidRow(
+                    class = "cutoff-row",
                     column(
                         2,
                         radioButtons(
@@ -64,13 +65,35 @@ shinyUI(
                         actionButton("mainPlotConfig", "Appearance")
                     ),
                     column(
-                        2, uiOutput("var1Cutoff.ui")
+                        2, uiOutput("var1Cutoff.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            )
                     ),
                     column(
-                        2, uiOutput("var2Cutoff.ui")
+                        2, uiOutput("var2Cutoff.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            )
                     ),
                     column(
-                        2, uiOutput("percentCutoff.ui"),
+                        2, class = "cutoff-col",
+                        uiOutput("percentCutoff.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            ),
                         actionButton(
                             "applyFilter",
                             label = "Apply filter",
@@ -79,7 +102,7 @@ shinyUI(
                         )
                     ),
                     column(
-                        2,
+                        2, class = "cutoff-col",
                         numericInput(
                             "coortholog",
                             "Max co-orthologs",
@@ -88,7 +111,14 @@ shinyUI(
                             step = 1,
                             value = 999,
                             width = 150
-                        ),
+                        ) %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            ),
                         actionButton(
                             "resetMain",
                             label = "Reset cutoffs",
@@ -104,6 +134,7 @@ shinyUI(
             condition = "input.tabs=='Customized profile'",
             wellPanel(
                 fluidRow(
+                    class = "cutoff-row",
                     column(
                         2,
                         radioButtons(
@@ -130,13 +161,35 @@ shinyUI(
                         actionButton("selectedPlotConfig", "Appearance")
                     ),
                     column(
-                        2, uiOutput("var1Filter.ui")
+                        2, uiOutput("var1Filter.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            )
                     ),
                     column(
-                        2, uiOutput("var2Filter.ui")
+                        2, uiOutput("var2Filter.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            )
                     ),
                     column(
-                        2, uiOutput("percentFilter.ui"),
+                        2, class = "cutoff-col",
+                        uiOutput("percentFilter.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            ),
                         actionButton(
                             "applyFilterCustom",
                             label = "Apply filter",
@@ -146,8 +199,15 @@ shinyUI(
                         
                     ),
                     column(
-                        2,
-                        uiOutput("coorthologFilter.ui"),
+                        2, class = "cutoff-col",
+                        uiOutput("coorthologFilter.ui") %>%
+                            bs_embed_popover(
+                                title = "",
+                                content = "Click <b>Apply filter</b> after changing the cutoffs to update the profile",
+                                placement = "top",
+                                trigger = "hover",
+                                html = "true"
+                            ),
                         actionButton(
                             "resetSelected",
                             "Reset cutoffs",

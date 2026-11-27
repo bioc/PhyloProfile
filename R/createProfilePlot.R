@@ -519,11 +519,16 @@ heatmapPlottingFast <- function(data = NULL, parm = NULL) {
             cut(data$var2, breaks = 100)
         ]
     cl[data$paralog > 1] <- parm$paraColor
-    # Add scatter plot
+    # Add scatter plot. The raster resolution follows the plot size (if
+    # given), so that dots are not squeezed when the plot is small
+    rasterPx <- c(1000, 1000)
+    if (!is.null(parm$width) && !is.null(parm$height) &&
+        isTRUE(parm$width > 0) && isTRUE(parm$height > 0))
+        rasterPx <- round(pmin(c(parm$width, parm$height), 2000))
     p <- p +
         geom_scattermost(
             cbind(x_values, y_values), color = cl,
-            pointsize = 2 * (1 + parm$dotZoom), pixels = c(1000, 1000)
+            pointsize = 2 * (1 + parm$dotZoom), pixels = rasterPx
         )
     p <- p +
         scale_x_continuous(
@@ -984,4 +989,294 @@ addRankDivisionPlot <- function(
                     )
             )
     }
+}
+
+#' Add a species tree aligned to the taxon columns (rows) of a profile plot
+#' @description Draw a (cladogram) species tree outside the plot panel so that
+#' each tip sits exactly at the position of its (super)taxon. The tree is
+#' added as an annotation (no scale training), therefore the coordinates of
+#' the data points stay unchanged and click/brush events keep working.
+#' @export
+#' @usage addSpeciesTreePlot(profilePlot = NULL, plotDf = NULL, tree = NULL,
+#'     taxaMap = NULL, xAxis = "taxa", height = 25,
+#'     lineColor = "gray30", lineWidth = 0.5, returnLayout = FALSE)
+#' @param profilePlot initial (highlighted) profile plot
+#' @param plotDf dataframe used for the profile plot (needs a "supertaxon"
+#' column)
+#' @param tree a "phylo" object. Tip labels are either the supertaxon names
+#' of the plot or the abbrNames (e.g. ncbi9606) given in taxaMap
+#' @param taxaMap optional dataframe with columns "abbrName" and "supertaxon"
+#' to map tree tips to supertaxa (e.g. the output of sortInputTaxa). The first
+#' tip of each supertaxon is used as its representative
+#' @param xAxis type of x-axis (either "genes" or "taxa"). The tree is drawn
+#' below the taxon labels of the x-axis for "taxa" and left of the taxon
+#' labels of the y-axis for "genes", so the labels are the leaf names
+#' @param height height of the tree in mm
+#' @param lineColor color of the tree branches
+#' @param lineWidth line width of the tree branches
+#' @param returnLayout if TRUE, return a list of the plot and the tree layout
+#' (branch segments in data units / mm, tips below each node), e.g. for
+#' showing node information on hover. Default = FALSE
+#' @return A profile plot with the species tree as a ggplot object. If the
+#' tree does not fit the taxon order of the plot, the input plot is returned
+#' unchanged (with a message)
+#' @author Vinh Tran tran@bio.uni-frankfurt.de
+#' @seealso \code{\link{heatmapPlotting}}, \code{\link{addRankDivisionPlot}},
+#' \code{\link{sortInputTaxa}}
+#' @examples
+#' data("finalProcessedProfile", package="PhyloProfile")
+#' plotDf <- dataMainPlot(finalProcessedProfile)
+#' profilePlot <- heatmapPlotting(plotDf)
+#' taxa <- levels(droplevels(as.factor(plotDf$supertaxon)))
+#' tree <- ape::rtree(length(taxa), tip.label = taxa)
+#' addSpeciesTreePlot(profilePlot, plotDf, tree)
+
+addSpeciesTreePlot <- function(
+        profilePlot = NULL, plotDf = NULL, tree = NULL, taxaMap = NULL,
+        xAxis = "taxa", height = 25,
+        lineColor = "gray30", lineWidth = 0.5, returnLayout = FALSE
+) {
+    if (is.null(profilePlot)) stop("Profile plot cannot be NULL!")
+    out <- function(p, layout = NULL) {
+        if (isTRUE(returnLayout)) return(list(plot = p, layout = layout))
+        return(p)
+    }
+    if (is.null(plotDf) || is.null(tree)) {
+        message("Species tree not drawn: no plot data or no tree")
+        return(out(profilePlot))
+    }
+    if (is.null(height) || !isTRUE(height > 0)) height <- 25
+    # taxon columns (or rows) in the order of the plot
+    cols <- levels(droplevels(as.factor(plotDf$supertaxon)))
+    nCol <- length(cols)
+    if (nCol < 2) {
+        message("Species tree not drawn: less than 2 taxa in the plot")
+        return(out(profilePlot))
+    }
+    # map tree tips to supertaxa (one representative tip per supertaxon)
+    if (!is.null(taxaMap)) {
+        taxaMap <- data.frame(
+            abbrName = as.character(taxaMap$abbrName),
+            supertaxon = as.character(taxaMap$supertaxon),
+            stringsAsFactors = FALSE
+        )
+        # dataMainPlot removes the 7-character index prefix of the supertaxon
+        # names (e.g. "100006_"), so remove it here as well if needed
+        if (!any(taxaMap$supertaxon %in% cols)) {
+            stripped <- substr(
+                taxaMap$supertaxon, 8, nchar(taxaMap$supertaxon)
+            )
+            if (any(stripped %in% cols)) taxaMap$supertaxon <- stripped
+        }
+        m <- taxaMap[
+            as.character(taxaMap$abbrName) %in% tree$tip.label &
+                as.character(taxaMap$supertaxon) %in% cols, ]
+        m <- m[!duplicated(as.character(m$supertaxon)), ]
+        if (nrow(m) < 2) {
+            message(
+                "Species tree not drawn: taxa of the plot not found in the ",
+                "tree (e.g. plot: ", paste(head(cols, 3), collapse = ", "),
+                "; tree tips: ", paste(head(tree$tip.label, 3), collapse=", "),
+                "; taxaMap: ", paste(head(taxaMap$abbrName, 3), collapse=", "),
+                " / ", paste(head(taxaMap$supertaxon, 3), collapse=", "), ")"
+            )
+            return(out(profilePlot))
+        }
+        tree <- ape::keep.tip(tree, as.character(m$abbrName))
+        repAbbr <- stats::setNames(
+            as.character(m$abbrName), as.character(m$supertaxon))
+        tree$tip.label <- as.character(m$supertaxon)[
+            match(tree$tip.label, as.character(m$abbrName))]
+    }
+    missingTaxa <- setdiff(cols, tree$tip.label)
+    if (length(missingTaxa) > 0) {
+        message(
+            "Species tree not drawn: ", length(missingTaxa),
+            " taxa of the plot not found in the tree"
+        )
+        return(out(profilePlot))
+    }
+    if (length(setdiff(tree$tip.label, cols)) > 0)
+        tree <- ape::keep.tip(tree, cols)
+    tree <- ape::collapse.singles(tree)
+    # root using the first taxon (reference), the same way as sortInputTaxa
+    tree <- ape::root(tree, outgroup = cols[1], resolve.root = TRUE)
+    tree <- ape::reorder.phylo(tree, "postorder")
+    if (!exists("repAbbr", inherits = FALSE))
+        repAbbr <- stats::setNames(rep(NA_character_, nCol), cols)
+    # rectangular cladogram layout: tip i at position i (= its column)
+    e <- tree$edge
+    nTip <- length(tree$tip.label)
+    nNode <- nTip + tree$Nnode
+    rootNode <- nTip + 1
+    tipPos <- match(tree$tip.label, cols)
+    pos <- c(tipPos, rep(NA_real_, tree$Nnode))
+    depth <- rep(0, nNode)
+    lo <- c(tipPos, rep(Inf, tree$Nnode))
+    hi <- c(tipPos, rep(-Inf, tree$Nnode))
+    nTips <- c(rep(1, nTip), rep(0, tree$Nnode))
+    minChild <- rep(Inf, nNode)
+    maxChild <- rep(-Inf, nNode)
+    descTips <- c(as.list(tree$tip.label), rep(list(character(0)), tree$Nnode))
+    for (i in seq_len(nrow(e))) {
+        p <- e[i, 1]
+        ch <- e[i, 2]
+        # postorder: all edges below ch are already processed
+        if (ch > nTip) pos[ch] <- (minChild[ch] + maxChild[ch]) / 2
+        lo[p] <- min(lo[p], lo[ch])
+        hi[p] <- max(hi[p], hi[ch])
+        nTips[p] <- nTips[p] + nTips[ch]
+        minChild[p] <- min(minChild[p], pos[ch])
+        maxChild[p] <- max(maxChild[p], pos[ch])
+        depth[p] <- max(depth[p], depth[ch] + 1)
+        descTips[[p]] <- c(descTips[[p]], descTips[[ch]])
+    }
+    pos[rootNode] <- (minChild[rootNode] + maxChild[rootNode]) / 2
+    # every clade must cover a contiguous block of columns, otherwise the
+    # tree cannot be drawn without crossing branches
+    inner <- (nTip + 1):nNode
+    if (any(hi[inner] - lo[inner] + 1 != nTips[inner])) {
+        message(
+            "Species tree not drawn: taxon order of the plot does not ",
+            "match the tree"
+        )
+        return(out(profilePlot))
+    }
+    # styles of the taxon labels (axis text): the tree is placed below the
+    # x-axis labels (xAxis = "taxa") or left of the y-axis labels ("genes")
+    th <- tryCatch(theme_get() + profilePlot$theme, error = function(e) NULL)
+    getEl <- function(name) tryCatch(
+        calc_element(name, th), error = function(e) NULL
+    )
+    isGenes <- xAxis == "genes"
+    txt <- getEl(if (isGenes) "axis.text.y.left" else "axis.text.x.bottom")
+    tickLen <- getEl(
+        if (isGenes) "axis.ticks.length.y.left" else"axis.ticks.length.x.bottom"
+    )
+    toMm <- function(u) tryCatch(
+        grid::convertUnit(u, "mm", valueOnly = TRUE), error = function(e) 1
+    )
+    labelStyle <- list(
+        size = if (!is.null(txt$size)) txt$size else 8,
+        family = if (!is.null(txt$family)) txt$family else "",
+        angle = if (!is.null(txt$angle)) txt$angle else 0,
+        lineheight = if (!is.null(txt$lineheight)) txt$lineheight else 0.9,
+        margin = if (is.null(txt$margin)) 1 else toMm(
+            if (isGenes) txt$margin[2] else txt$margin[1]),
+        tick = if (is.null(tickLen)) 1 else toMm(tickLen)
+    )
+    gap <- 1
+    # filled at drawing time: offset of the tree (mm) and panel position (px)
+    drawInfo <- new.env()
+    treeGrob <- grid::gTree(
+        cl = "ppSpeciesTree", labels = cols, labelStyle = labelStyle,
+        isGenes = isGenes, nCol = nCol, gap = gap, height = height,
+        maxDepth = max(depth), lineColor = lineColor, lineWidth = lineWidth,
+        seg = data.frame(
+            a0 = c(pos[e[, 2]], minChild[inner]),
+            a1 = c(pos[e[, 2]], maxChild[inner]),
+            d0 = c(depth[e[, 2]], depth[inner]),
+            d1 = c(depth[e[, 1]], depth[inner])
+        ),
+        drawInfo = drawInfo
+    )
+    if (isGenes) {
+        profilePlot <- profilePlot +
+            annotation_custom(
+                treeGrob, xmin = -Inf, xmax = -Inf,
+                ymin = 0.5, ymax = nCol + 0.5
+            ) +
+            theme(axis.title.y = element_text(
+                margin = margin(r = gap + height + 2, unit = "mm")
+            ))
+    } else {
+        profilePlot <- profilePlot +
+            annotation_custom(
+                treeGrob, xmin = 0.5, xmax = nCol + 0.5,
+                ymin = -Inf, ymax = -Inf
+            ) +
+            theme(axis.title.x = element_text(
+                margin = margin(t = gap + height + 2, unit = "mm")
+            ))
+    }
+    if (!identical(profilePlot$coordinates$clip, "off"))
+        profilePlot <- profilePlot + coord_cartesian(clip = "off")
+    # layout of the drawn branches (e.g. for hover info): position along the
+    # taxon axis in data units, depth scaled to 0..height (mm, to be added to
+    # drawInfo$offset), and the node each segment belongs to (vertical branch
+    # -> child node, horizontal connector -> parent node)
+    toAway <- function(d) gap + d / max(depth) * height
+    layout <- list(
+        xAxis = xAxis, nCol = nCol,
+        segments = data.frame(
+            node = c(e[, 2], inner),
+            along0 = treeGrob$seg$a0, along1 = treeGrob$seg$a1,
+            away0 = toAway(treeGrob$seg$d0), away1 = toAway(treeGrob$seg$d1)
+        ),
+        isTip = seq_len(nNode) <= nTip,
+        descTips = descTips,
+        repAbbr = repAbbr,
+        drawInfo = drawInfo
+    )
+    return(out(profilePlot, layout))
+}
+
+#' Draw the species tree grob (created by addSpeciesTreePlot)
+#' @description The size of the taxon labels is only known at drawing time,
+#' therefore the tree is placed here: below (or left of) the axis labels.
+#' The offset and the panel position on the device are stored in
+#' x$drawInfo (used e.g. for the hover info in the Shiny app).
+#' @param x a ppSpeciesTree grob
+#' @return the grob with its branch segments
+#' @importFrom grid makeContent
+#' @exportS3Method grid::makeContent
+makeContent.ppSpeciesTree <- function(x) {
+    st <- x$labelStyle
+    # extent of the rotated label block: longest label (w) and text height (h)
+    gpText <- grid::gpar(
+        fontsize = st$size, fontfamily = st$family, lineheight = st$lineheight
+    )
+    w <- max(vapply(x$labels, function(l) grid::convertWidth(
+        grid::grobWidth(grid::textGrob(l, gp = gpText)), "mm", valueOnly = TRUE
+    ), numeric(1)))
+    h <- grid::convertHeight(
+        grid::grobHeight(grid::textGrob("Ag", gp = gpText)), "mm",
+        valueOnly = TRUE
+    )
+    rad <- st$angle * pi / 180
+    labelMm <- if (x$isGenes) {
+        w * abs(cos(rad)) + h * abs(sin(rad))
+    } else w * abs(sin(rad)) + h * abs(cos(rad))
+    offset <- st$tick + st$margin + labelMm
+    away <- function(d) grid::unit(
+        -(offset + x$gap + d / x$maxDepth * x$height), "mm"
+    )
+    along <- function(a) grid::unit((a - 0.5) / x$nCol, "npc")
+    gp <- grid::gpar(
+        col = x$lineColor, lwd = x$lineWidth * .pt, lineend = "square"
+    )
+    sg <- x$seg
+    seg <- if (x$isGenes) {
+        grid::segmentsGrob(
+            x0 = away(sg$d0), x1 = away(sg$d1),
+            y0 = along(sg$a0), y1 = along(sg$a1), gp = gp
+        )
+    } else {
+        grid::segmentsGrob(
+            x0 = along(sg$a0), x1 = along(sg$a1),
+            y0 = away(sg$d0), y1 = away(sg$d1), gp = gp
+        )
+    }
+    # remember where the tree was drawn (device inches, origin bottom-left)
+    tryCatch({
+        ll <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"))
+        ur <- grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"))
+        x$drawInfo$offset <- offset
+        x$drawInfo$left <- as.numeric(ll$x)
+        x$drawInfo$right <- as.numeric(ur$x)
+        x$drawInfo$bottom <- as.numeric(ll$y)
+        x$drawInfo$top <- as.numeric(ur$y)
+        x$drawInfo$devHeight <- grDevices::dev.size("in")[2]
+    }, error = function(e) NULL)
+    grid::setChildren(x, grid::gList(seg))
 }

@@ -2,6 +2,50 @@
 \title{PhyloProfile news}
 \encoding{UTF-8}
 
+\section{Version 2.6.1}{
+  \itemize{
+    \item \strong{Species tree}
+      \itemize{
+        \item Show a species tree aligned to the taxa of the profile plot
+        \item The tree is the one used for sorting the taxa (input tree or
+          the pre-calculated taxonomy tree), rooted at the reference taxon
+          and drawn as a cladogram.
+        \item Hover over a branch to show the name and rank of the lowest
+          common taxon of that node.
+        \item New function \code{addSpeciesTreePlot()}.
+      }
+    \item \strong{New taxa handling}
+      \itemize{
+        \item Remove the option to exclude all new taxa.
+        \item Check whether parent IDs in \code{newTaxa.txt} exist in the NCBI taxonomy database.
+        \item Add descriptions for the different new-taxa categories.
+      }
+    \item \strong{Gene age}
+      \itemize{
+        \item Support gene age calculation at the strain level.
+      }
+    \item \strong{Plots}
+      \itemize{
+        \item Add a description to the "Choose supertaxon of interest" option.
+        \item Move the selected plot settings above the plot.
+        \item Automatically adjust the overview plot size in fast mode.
+        \item Synchronize the x-axis of the selected plot with the main plot.
+        \item Add an option to change the colour of division lines.
+        \item Resolve overlapping supertaxon labels.
+      }
+    \item \strong{Bug fixes}
+      \itemize{
+        \item Fix an issue where clicking the Domain plot button before opening a Detailed plot caused an error.
+        \item Fix issues when switching between gene and taxa axes:
+          \itemize{
+            \item Correct taxonomic label display.
+            \item Fix incorrect coordinates in the selected plot.
+            \item Fix incorrect selection of plotted points caused by swapped x/y coordinates in fast mode.
+          }
+      }
+  }
+}
+
 \section{Version 2.0.5}{
   \itemize{
     \item auto adjust plot hight for taxonomic labels

@@ -410,6 +410,38 @@ shinyServer(function(input, output, session) {
       val <- input[[fullId]]
       if (is.null(val)) defaults[[id]] else val
     }
+
+    # ---------------- x-axis label angle ----------------
+    # default: 90 degrees when the species tree is shown below the taxon
+    # labels (x-axis = taxa), otherwise 60 degrees. A value set by the user in
+    # the config window is kept until the tree or the x-axis is switched
+    mainXAngleDefault <- reactive({
+      if (!isFALSE(input$showSpeciesTree) && identical(input$xAxis, "taxa") &&
+          !identical(input$plotMode, "fast")) 90 else 60
+    })
+    selectedXAngleDefault <- reactive({
+      if (!isFALSE(input$cusShowSpeciesTree) &&
+          identical(input$xAxisSelected, "taxa")) 90 else 60
+    })
+    mainXAngleUser <- reactiveVal(NULL)
+    selectedXAngleUser <- reactiveVal(NULL)
+    observeEvent(input$xAngle, { mainXAngleUser(input$xAngle) })
+    observeEvent(input$xAngleSelect, { selectedXAngleUser(input$xAngleSelect) })
+    observeEvent(mainXAngleDefault(), {
+      mainXAngleUser(NULL)
+      updateSliderInput(session, "xAngle", value = mainXAngleDefault())
+    })
+    observeEvent(selectedXAngleDefault(), {
+      selectedXAngleUser(NULL)
+      updateSliderInput(session, "xAngleSelect", value = selectedXAngleDefault())
+    })
+    getMainXAngle <- reactive({
+      if (is.null(mainXAngleUser())) mainXAngleDefault() else mainXAngleUser()
+    })
+    getSelectedXAngle <- reactive({
+      if (is.null(selectedXAngleUser())) selectedXAngleDefault()
+      else selectedXAngleUser()
+    })
     
     getLegendInput <- function(input, id) {
         val <- input[[id]]
@@ -435,7 +467,7 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session, "groupLabelSize", value = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig))
       updateNumericInput(session, "groupLabelDist", value = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig))
       updateSliderInput(session, "groupLabelAngle", value = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig))
-      updateSliderInput(session, "xAngle", value = getInputOrDefault(input, "xAngle", defaultPlotConfig))
+      updateSliderInput(session, "xAngle", value = getMainXAngle())
       updateSliderInput(session, "dotZoom", value = getInputOrDefault(input, "dotZoom", defaultPlotConfig))
     })
 
@@ -457,7 +489,7 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session, "groupLabelSizeSelect", value = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig, "Select"))
       updateNumericInput(session, "groupLabelDistSelect", value = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig, "Select"))
       updateSliderInput(session, "groupLabelAngleSelect", value = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig, "Select"))
-      updateSliderInput(session, "xAngleSelect", value = getInputOrDefault(input, "xAngle", defaultPlotConfig, "Select"))
+      updateSliderInput(session, "xAngleSelect", value = getSelectedXAngle())
       updateSliderInput(session, "dotZoomSelect", value = getInputOrDefault(input, "dotZoom", defaultPlotConfig, "Select"))
     })
 
@@ -883,9 +915,11 @@ shinyServer(function(input, output, session) {
     observeEvent(getUserTaxDBpath(),{
         if (is.null(checkUserTaxDB())) {
             newTaxa <- paste0(getUserTaxDBpath(), "/newTaxa.txt")
-            newTaxaDf <- as.data.frame(data.table::fread(newTaxa))
-            updated <- rbind(currentNCBIinfo(), newTaxaDf)
-            currentNCBIinfo(updated)
+            if (file.exists(newTaxa)) {
+                newTaxaDf <- as.data.frame(data.table::fread(newTaxa))
+                updated <- rbind(currentNCBIinfo(), newTaxaDf)
+                currentNCBIinfo(updated)
+            }
         }
     })
 
@@ -3145,14 +3179,36 @@ shinyServer(function(input, output, session) {
                                 "Merge into common ancestor (*)" = "lca"),
                     selected = "first"
                 )
+            ),
+            checkboxInput(
+                "showSpeciesTree", "Show species tree", value = TRUE
+            ),
+            conditionalPanel(
+                condition = "input.showSpeciesTree == true",
+                numericInput(
+                    "speciesTreeHeight", "Tree height (mm)", value = 25, min = 5,
+                    max = 200, step = 5
+                )
             )
         )
     })
 
+    # * max length of supertaxon (division) labels of the main plot ------------
+    mainSuperRankLabelLen <- reactive({
+        superRank <- input$superRankSelect
+        if (is.null(superRank) || superRank == "") return(0)
+        taxa <- inputTaxonName()
+        req(taxa)
+        getSuperRankLabelLen(
+            taxa$ncbiID, input$rankSelect, superRank, getTaxDBpath()
+        )
+    })
+
     # * update plot size based on input ----------------------------------------
-    # normal mode: size estimated by adaptPlotSize() (capped at 20000 px)
-    # fast mode:   same estimate, but only shrinks; never exceeds 900 px
-    #              (falls back to 900 x 900 when no estimate is possible)
+    # size = space for the dots + space for axis labels, supertaxon labels and
+    # legend (see estimatePlotSize()).
+    # normal mode: capped at 20000 px
+    # fast mode:   only shrinks, never exceeds 900 px
     observe({
         req(getMainInput())
         longDataframe <- getMainInput()
@@ -3165,44 +3221,69 @@ shinyServer(function(input, output, session) {
         req(input$plotMode)
         fastMode <- input$plotMode == "fast"
         maxSize <- if (fastMode) 900 else 20000
-        
-        adaptedSize <- c()
-        if (isTRUE(input$autoSizing)) {
-            inputSuperTaxon <- inputTaxonName()
-            nrTaxa <- nlevels(as.factor(inputSuperTaxon$fullName))
-            nrGene <- input$endIndex
-            adaptedSize <- adaptPlotSize(
-                nrTaxa, nrGene, input$xAxis,
-                getInputOrDefault(input, "dotZoom", defaultPlotConfig)
+
+        if (!isTRUE(input$autoSizing)) {
+            if (fastMode) {
+                updateNumericInput(session, "width", value = maxSize)
+                updateNumericInput(session, "height", value = maxSize)
+            }
+            return()
+        }
+
+        inputSuperTaxon <- inputTaxonName()
+        req(inputSuperTaxon)
+        nrTaxa <- nlevels(as.factor(inputSuperTaxon$fullName))
+        # number of plotted genes (genes from stIndex to endIndex)
+        stIndex <- if (isTruthy(input$stIndex)) input$stIndex else 1
+        nrGene <- min(input$endIndex, nlevels(as.factor(longDataframe$geneID))) -
+            stIndex + 1
+        nrGene <- max(nrGene, 1)
+        taxaLabelLen <- max(nchar(as.character(inputSuperTaxon$fullName)))
+        geneLabels <- longDataframe$geneID
+        if (identical(input$geneIdType, "geneName") &&
+            "geneName" %in% colnames(longDataframe))
+            geneLabels <- longDataframe$geneName
+        geneLabelLen <- max(nchar(as.character(geneLabels)), na.rm = TRUE)
+        groupLabelLen <- mainSuperRankLabelLen()
+        xAxis <- input$xAxis
+        nrY <- if (xAxis == "taxa") nrGene else nrTaxa
+
+        # legend: on top for small profiles without division lines
+        legendPos <- isolate(getLegendInput(input, "mainLegend"))
+        if (nrY <= 20) {
+            legendPos <- if (groupLabelLen == 0) "top" else "right"
+            updateSelectInput(
+                session, "mainLegend", label = "Legend position:",
+                choices = list("Right" = "right",
+                               "Left" = "left",
+                               "Top" = "top",
+                               "Bottom" = "bottom",
+                               "Hide" = "none"),
+                selected = legendPos
             )
         }
-        
-        if (length(adaptedSize) > 0) {
-            h <- adaptedSize[1]
-            hv <- adaptedSize[2]
-            wv <- adaptedSize[3]
-            if (h <= 20) {
-                legendPos <- "right"
-                if (!is.null(input$superRankSelect) &&
-                    input$superRankSelect == "") legendPos <- "top"
-                updateSelectInput(
-                    session, "mainLegend", label = "Legend position:",
-                    choices = list("Right" = "right",
-                                   "Left" = "left",
-                                   "Top" = "top",
-                                   "Bottom" = "bottom",
-                                   "Hide" = "none"),
-                    selected = legendPos
-                )
-            }
-            if (h <= 30) wv <- wv + 50
-            updateNumericInput(session, "width", value = min(maxSize, wv))
-            updateNumericInput(session, "height", value = min(maxSize, hv))
-        } else if (fastMode) {
-            # auto sizing off, or data too large for adaptPlotSize()
-            updateNumericInput(session, "width", value = maxSize)
-            updateNumericInput(session, "height", value = maxSize)
-        }
+
+        adaptedSize <- estimatePlotSize(
+            nrTaxa, nrGene, xAxis,
+            dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig),
+            taxaLabelLen = taxaLabelLen, geneLabelLen = geneLabelLen,
+            xSize = getInputOrDefault(input, "xSize", defaultPlotConfig),
+            ySize = getInputOrDefault(input, "ySize", defaultPlotConfig),
+            xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig),
+            groupLabelLen = groupLabelLen,
+            groupLabelSize = getInputOrDefault(
+                input, "groupLabelSize", defaultPlotConfig),
+            groupLabelDist = getInputOrDefault(
+                input, "groupLabelDist", defaultPlotConfig),
+            legendPos = legendPos,
+            legendSize = getInputOrDefault(
+                input, "legendSize", defaultPlotConfig),
+            fastMode = fastMode
+        )
+        updateNumericInput(
+            session, "width", value = min(maxSize, adaptedSize[3]))
+        updateNumericInput(
+            session, "height", value = min(maxSize, adaptedSize[2]))
         if (rtCheck) {
             checkpoint152 <- Sys.time()
             print(paste(
@@ -3211,7 +3292,7 @@ shinyServer(function(input, output, session) {
             ))
         }
     })
-    
+
     # fast mode: reset size of the selected (brushed) plot
     # (width/height of the main plot are now handled by the observer above)
     observe({
@@ -3226,7 +3307,8 @@ shinyServer(function(input, output, session) {
         shinyjs::reset("xSize")
         shinyjs::reset("ySize")
         shinyjs::reset("legendSize")
-        shinyjs::reset("xAngle")
+        mainXAngleUser(NULL)
+        updateSliderInput(session, "xAngle", value = mainXAngleDefault())
         shinyjs::reset("dotZoom")
         shinyjs::reset("mainLegend")
     })
@@ -3286,7 +3368,7 @@ shinyServer(function(input, output, session) {
                 legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig),
                 mainLegend = getLegendInput(input, "mainLegend"),
                 dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig),
-                xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig),
+                xAngle = getMainXAngle(),
                 groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig),
                 groupLabelDist = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig),
                 groupLabelAngle = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig)
@@ -3321,7 +3403,7 @@ shinyServer(function(input, output, session) {
                     legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig),
                     mainLegend = getLegendInput(input, "mainLegend"),
                     dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig),
-                    xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig),
+                    xAngle = getMainXAngle(),
                     groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig),
                     groupLabelDist = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig),
                     groupLabelAngle = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig)
@@ -3334,6 +3416,13 @@ shinyServer(function(input, output, session) {
                 "checkpoint162 - get plot main para done", checkpoint162,
                 " --- ",  checkpoint162 - checkpoint161
             ))
+        }
+        # fast mode + auto sizing: apply the estimated plot size right away
+        # (e.g. after choosing "Display taxonomic labels for"), without
+        # waiting for "Update appearance"
+        if (identical(input$plotMode, "fast") && isTRUE(input$autoSizing)) {
+            inputPara$width <- input$width
+            inputPara$height <- input$height
         }
         return(inputPara)
     })
@@ -3351,6 +3440,49 @@ shinyServer(function(input, output, session) {
 
         em(paste0("current point's size: ", minDot, " - ", maxDot))
     })
+
+    # * species tree for aligning to the profile plot ---------------------------
+    # same tree as used for sorting the taxa (input tree or preCalcTree.nw)
+    getSortingTaxaTree <- reactive({
+        inputTaxaTree <- NULL
+        if (input$mainInputType != "folder" && input$demoData == "preCalcDt") {
+            if (!is.null(i_treeInput))
+                inputTaxaTree <- ape::read.tree(file = i_treeInput)
+        } else if (
+            input$mainInputType != "folder" && !is.null(input$inputTree)
+        ) {
+            inputTaxaTree <- ape::read.tree(file = input$inputTree$datapath)
+        }
+        if (is.null(inputTaxaTree)) {
+            preCalcTree <- paste0(getTaxDBpath(), "/preCalcTree.nw")
+            if (file.exists(preCalcTree)) {
+                inputTaxaTree <- ape::read.tree(file = preCalcTree)
+            } else {
+                inputTaxaTree <- createUnrootedTree(
+                    getTaxonomyMatrix(getTaxDBpath())
+                )
+            }
+        }
+        return(inputTaxaTree)
+    })
+
+    getSpeciesTree <- function(show, height) {
+        reactive({
+            if (isFALSE(show())) return(NULL)
+            req(sortedtaxaList())
+            tree <- tryCatch(getSortingTaxaTree(), error = function(e) {
+                message("Species tree not drawn: loading tree failed: ",
+                        conditionMessage(e))
+                NULL
+            })
+            if (is.null(tree)) return(NULL)
+            list(
+                tree = tree,
+                taxaMap = sortedtaxaList()[, c("abbrName", "supertaxon")],
+                height = height()
+            )
+        })
+    }
 
     # * plot main profile ------------------------------------------------------
     mainpointInfo <- callModule(
@@ -3370,7 +3502,10 @@ shinyServer(function(input, output, session) {
         superRank = reactive(input$superRankSelect),
         labelMode = reactive(input$labelMode),
         allTaxa = allInputTaxa,
-        mode = reactive(input$plotMode)
+        mode = reactive(input$plotMode),
+        speciesTree = getSpeciesTree(
+            reactive(input$showSpeciesTree), reactive(input$speciesTreeHeight)
+        )
     )
 
     # ======================== CUSTOMIZED PROFILE TAB ==========================
@@ -3601,6 +3736,16 @@ shinyServer(function(input, output, session) {
                                 "Merge into common ancestor (*)" = "lca"),
                     selected = "first"
                 )
+            ),
+            checkboxInput(
+                "cusShowSpeciesTree", "Show species tree", value = TRUE
+            ),
+            conditionalPanel(
+                condition = "input.cusShowSpeciesTree == true",
+                numericInput(
+                    "cusSpeciesTreeHeight", "Tree height (mm)", value = 25, min = 5,
+                    max = 200, step = 5
+                )
             )
         )
     })
@@ -3689,7 +3834,8 @@ shinyServer(function(input, output, session) {
         shinyjs::reset("xSizeSelect")
         shinyjs::reset("ySizeSelect")
         shinyjs::reset("legendSizeSelect")
-        shinyjs::reset("xAngleSelect")
+        selectedXAngleUser(NULL)
+        updateSliderInput(session, "xAngleSelect", value = selectedXAngleDefault())
         shinyjs::reset("dotZoomSelect")
         shinyjs::reset("selectedLegend")
     })
@@ -3744,7 +3890,7 @@ shinyServer(function(input, output, session) {
                 legendSize = getInputOrDefault(input, "legendSize", defaultPlotConfig, suffix = "Select"),
                 mainLegend = getLegendInput(input, "selectedLegend"),
                 dotZoom = getInputOrDefault(input, "dotZoom", defaultPlotConfig, suffix = "Select"),
-                xAngle = getInputOrDefault(input, "xAngle", defaultPlotConfig, suffix = "Select"),
+                xAngle = getSelectedXAngle(),
                 groupLabelSize = getInputOrDefault(input, "groupLabelSize", defaultPlotConfig, suffix = "Select"),
                 groupLabelDist = getInputOrDefault(input, "groupLabelDist", defaultPlotConfig, suffix = "Select"),
                 groupLabelAngle = getInputOrDefault(input, "groupLabelAngle", defaultPlotConfig, suffix = "Select")
@@ -3771,7 +3917,11 @@ shinyServer(function(input, output, session) {
         superRank = reactive(input$cusSuperRankSelect),
         labelMode = reactive(input$cusLabelMode),
         allTaxa = allInputTaxa,
-        mode = reactive(input$plotMode)
+        mode = reactive(input$plotMode),
+        speciesTree = getSpeciesTree(
+            reactive(input$cusShowSpeciesTree),
+            reactive(input$cusSpeciesTreeHeight)
+        )
     )
 
     # ==================== DIMENSIONALITY REDUCTION PLOT =======================
@@ -4083,6 +4233,11 @@ shinyServer(function(input, output, session) {
         )
     })
 
+    plotlyReady <- reactiveVal(FALSE)
+    observeEvent(input$dimRedPlotType, {
+        if (input$dimRedPlotType != "plotly") plotlyReady(FALSE)
+    })
+
     output$dimRedPlotly <- renderPlotly({
         req(getMainInput())
         options(htmlwidgets.TOJSON_ARGS = NULL)
@@ -4097,6 +4252,7 @@ shinyServer(function(input, output, session) {
                     dotZoom = input$dimRedPlot.dotzoom
                 )
                 g <- event_register(g, "plotly_click")
+                plotlyReady(TRUE)
                 return(g)
             }
         )
@@ -4226,7 +4382,9 @@ shinyServer(function(input, output, session) {
 
     # ** clicked DIM reduction table (3D plot) ---------------------------------
     rv <- reactiveValues(clickedData = data.frame())
-    observeEvent(event_data("plotly_click"), {
+    observeEvent({
+        if (isTRUE(plotlyReady())) event_data("plotly_click") else NULL
+    }, {
         click_data <- event_data("plotly_click")
         if (!is.null(click_data)) {
             clicked_df <- dimRedPlotData() %>% filter(
@@ -4281,7 +4439,7 @@ shinyServer(function(input, output, session) {
 
     # ** DIM reduction selected taxa table -------------------------------------
     dimRedSelectedTaxa <- reactive({
-        if (is.null(input$dimRedBrush$ymin) & is.null(event_data("plotly_click"))) {
+        if (is.null(input$dimRedBrush$ymin) & nrow(rv$clickedData) == 0) {
             shinyjs::disable("addSpecDimRed")
             return()
         } else {
@@ -4328,7 +4486,7 @@ shinyServer(function(input, output, session) {
 
     # ** DIM reduction selected genes table ------------------------------------
     dimRedSelectedGenes <- reactive({
-        if (is.null(input$dimRedBrush$ymin) & is.null(event_data("plotly_click"))) {
+        if (is.null(input$dimRedBrush$ymin) & nrow(rv$clickedData) == 0) {
             shinyjs::disable("addGeneDimRed")
             return()
         } else {
@@ -4744,10 +4902,12 @@ shinyServer(function(input, output, session) {
         taxId <- gsub("ncbi", "", info[5])
         if (taxId == 237631) taxId <- 5270 # Ustilago maydis
         
-        newTaxaFile <- paste0(getUserTaxDBpath(), "/newTaxa.txt")
-        newTaxa <- as.data.frame(data.table::fread(newTaxaFile))
-        validId <- checkIdNewtaxa(taxId, newTaxa)
-        if (!is.null(validId)) taxId <- validId
+        newTaxaFile <- file.path(getTaxDBpath(), "newTaxa.txt")
+        if (file.exists(newTaxaFile)) {
+            newTaxa <- as.data.frame(data.table::fread(newTaxaFile))
+            validId <- checkIdNewtaxa(taxId, newTaxa)
+            if (!is.null(validId)) taxId <- validId
+        }
         
         taxHierarchy <- PhyloProfile:::getTaxHierarchy(taxId, currentNCBIinfo())
         taxUrls <- "Not available"
@@ -4830,10 +4990,6 @@ shinyServer(function(input, output, session) {
 
     # ======================== FEATURE ARCHITECTURE PLOT =======================
     # * check if seed and orthoID are specified and get domain file/path -------
-    observeEvent(input$doDomainPlot, {
-        showModal(archiPlotModal())
-    })
-
     observe({
         infoTmp <- c()
         if (input$tabs == "Main profile") {
